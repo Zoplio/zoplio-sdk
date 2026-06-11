@@ -12,7 +12,7 @@ const DEFAULT_MCP_URL = 'https://api.zoplio.com/mcp';
 
 /**
  * Tools exposed by the Zoplio hosted MCP server. Each maps 1:1 to a Zoplio
- * API v1 REST operation (see docs/openapi.yaml).
+ * API v1 REST operation (see the OpenAPI reference in docs).
  */
 const TOOLS = [
   'schedule_meeting', // POST   /v1/meetings
