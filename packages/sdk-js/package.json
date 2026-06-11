@@ -1,0 +1,35 @@
+{
+  "name": "@zoplio/sdk-js",
+  "version": "0.2.0",
+  "description": "Official Zoplio Node.js/TypeScript SDK for the Zoplio API v1 (MIT)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npx --yes tsx@4.19.2 --test \"src/**/__tests__/*.test.ts\""
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zoplio/zoplio-sdk.git",
+    "directory": "packages/sdk-js"
+  },
+  "homepage": "https://github.com/Zoplio/zoplio-sdk#readme",
+  "bugs": "https://github.com/Zoplio/zoplio-sdk/issues",
+  "keywords": [
+    "zoplio",
+    "scheduling",
+    "ai-agent",
+    "meetings",
+    "mcp"
+  ]
+}

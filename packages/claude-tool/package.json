@@ -1,0 +1,25 @@
+{
+  "name": "@zoplio/claude-tool",
+  "version": "0.1.0",
+  "description": "Connect Claude to Zoplio \u2014 hosted MCP connection config + tool reference",
+  "main": "index.js",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zoplio/zoplio-sdk.git",
+    "directory": "packages/claude-tool"
+  },
+  "homepage": "https://github.com/Zoplio/zoplio-sdk#readme",
+  "bugs": "https://github.com/Zoplio/zoplio-sdk/issues",
+  "keywords": [
+    "zoplio",
+    "scheduling",
+    "ai-agent",
+    "meetings",
+    "mcp"
+  ]
+}

@@ -1,0 +1,788 @@
+openapi: 3.1.0
+info:
+  title: Zoplio API
+  version: 1.0.0
+  summary: Schedule meetings through an AI agent that negotiates with every participant.
+  description: |
+    Zoplio is an AI scheduling agent. You create a meeting with who and roughly
+    when; Zoplio reaches out to every participant (WhatsApp/email), negotiates a
+    time everyone can make, and confirms it. This API is asynchronous by
+    design — `POST /v1/meetings` returns immediately with
+    `status: negotiating`; track progress by polling `GET /v1/meetings/{id}`
+    or by subscribing to webhooks.
+
+    ## Authentication
+    Every `/v1` route requires
+    `Authorization: Bearer zpl_<hex>`. Invalid or unknown keys get `401`;
+    recognised but expired/inactive keys get `403` (error code stays
+    `unauthorized`). If the auth backend is unavailable the API answers `503`
+    (`upstream_error`) — an outage never reads as "your key is bad".
+
+    ## Rate limiting
+    60 requests/min per API key (sliding window). Authenticated responses
+    carry `X-RateLimit-Limit` and `X-RateLimit-Remaining`; exceeding the
+    window returns `429` with code `rate_limited`. Rejected requests still
+    count toward the window.
+
+    ## Errors
+    Every non-2xx response uses one envelope:
+    `{"error": {"code", "message", "details"?}}` with `code` one of
+    `unauthorized`, `rate_limited`, `validation_failed`, `not_found`,
+    `conflict`, `upstream_error`. `validation_failed` adds
+    `details: [{"field", "message"}]`.
+
+    ## Idempotency
+    `POST /v1/meetings` accepts an `X-Idempotency-Key` header (1-128 chars).
+    Replaying the same key returns the originally created meeting (with its
+    current, possibly already-confirmed status) instead of creating a
+    duplicate.
+  contact:
+    name: Zoplio
+    url: https://zoplio.com
+
+servers:
+  - url: https://api.zoplio.com
+    description: Production
+  - url: http://localhost:3022
+    description: Local api-gateway
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Meetings
+    description: Create, inspect, reschedule and cancel agent-negotiated meetings
+  - name: Webhooks
+    description: Subscriptions for meeting lifecycle events
+  - name: Developer
+    description: Dev-environment provisioning and service health
+
+paths:
+  /health:
+    get:
+      tags: [Developer]
+      summary: Service health
+      security: []
+      responses:
+        "200":
+          description: Gateway is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  service:
+                    type: string
+                    const: api-gateway
+
+  /v1/meetings:
+    post:
+      tags: [Meetings]
+      summary: Create a meeting and start negotiation
+      operationId: scheduleMeeting
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMeetingRequest"
+      responses:
+        "201":
+          description: Meeting created; Zoplio is contacting participants
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateMeetingResult"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/KeyExpired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+    get:
+      tags: [Meetings]
+      summary: List meetings you organize
+      operationId: listMeetings
+      description: Newest first. Only meetings owned by the API key's user are returned.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MeetingStatus"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Meetings owned by the key's user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [meetings]
+                properties:
+                  meetings:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MeetingSummary"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /v1/meetings/{id}:
+    get:
+      tags: [Meetings]
+      summary: Get one meeting
+      operationId: getMeeting
+      parameters:
+        - $ref: "#/components/parameters/MeetingId"
+      responses:
+        "200":
+          description: Meeting detail with per-participant status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /v1/meetings/{id}/cancel:
+    post:
+      tags: [Meetings]
+      summary: Cancel a meeting
+      operationId: cancelMeeting
+      description: Idempotent — cancelling an already-cancelled meeting returns `cancelled` again.
+      parameters:
+        - $ref: "#/components/parameters/MeetingId"
+      responses:
+        "200":
+          description: Meeting cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: cancelled
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /v1/meetings/{id}/reschedule:
+    post:
+      tags: [Meetings]
+      summary: Reschedule a meeting to an exact date+time
+      operationId: rescheduleMeeting
+      description: |
+        Proposes exactly the requested slot to all participants and starts a
+        new negotiation round. `409` (`conflict`) means the requested time
+        collides with a participant's availability, no slot is available at
+        that time, or the negotiation state does not allow re-proposing.
+      parameters:
+        - $ref: "#/components/parameters/MeetingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preferredDate, preferredTime]
+              properties:
+                preferredDate:
+                  type: string
+                  format: date
+                  description: YYYY-MM-DD
+                preferredTime:
+                  type: string
+                  pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                  description: HH:MM, 24-hour
+                timezone:
+                  type: string
+                  description: IANA timezone the date/time are expressed in (e.g. Europe/Prague)
+      responses:
+        "200":
+          description: New slot proposed to participants
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [meetingId, status, proposedSlots]
+                properties:
+                  meetingId:
+                    type: string
+                  status:
+                    type: string
+                    const: negotiating
+                  proposedSlots:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Slot"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Requested time conflicts with a participant or the negotiation state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /v1/webhooks:
+    post:
+      tags: [Webhooks]
+      summary: Create a webhook subscription
+      operationId: createWebhook
+      description: |
+        Subscribes a public http(s) URL to meeting lifecycle events. URLs
+        resolving to private/internal hosts are rejected (`validation_failed`).
+        The returned `whsec_` secret is shown exactly once — store it to
+        verify delivery signatures.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                events:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: "#/components/schemas/WebhookEvent"
+                  description: Defaults to all four events when omitted
+      responses:
+        "201":
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, url, events, secret]
+                properties:
+                  id:
+                    type: string
+                  url:
+                    type: string
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WebhookEvent"
+                  secret:
+                    type: string
+                    description: whsec_ signing secret — returned only here
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+    get:
+      tags: [Webhooks]
+      summary: List webhook subscriptions
+      operationId: listWebhooks
+      description: Secrets are never included.
+      responses:
+        "200":
+          description: The key's user's subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhooks]
+                properties:
+                  webhooks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WebhookSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /v1/webhooks/{id}:
+    delete:
+      tags: [Webhooks]
+      summary: Delete a webhook subscription
+      operationId: deleteWebhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Subscription deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
+                    const: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+# Outbound deliveries Zoplio POSTs to subscribed URLs.
+webhooks:
+  meeting.created:
+    post:
+      tags: [Webhooks]
+      summary: A meeting was created
+      description: |
+        Sent when a meeting is created (negotiation starting). All deliveries
+        carry `X-Zoplio-Event` (the event name) and `X-Zoplio-Signature`
+        (HMAC-SHA256 of the raw request body with your subscription's
+        `whsec_` secret, hex-encoded). Verify by recomputing over the RAW
+        bytes before parsing. Respond 2xx within 10 seconds; failures are
+        retried up to 2 more times (3 attempts total) with 1m/5m backoff,
+        and the subscription is disabled after 10 consecutive failures.
+      parameters:
+        - $ref: "#/components/parameters/ZoplioEventHeader"
+        - $ref: "#/components/parameters/ZoplioSignatureHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookDelivery"
+      responses:
+        "200":
+          description: Acknowledge the delivery with any 2xx
+  meeting.confirmed:
+    post:
+      tags: [Webhooks]
+      summary: All participants accepted — meeting confirmed
+      description: Same headers, signature and retry semantics as meeting.created. The payload includes `confirmedSlot`.
+      parameters:
+        - $ref: "#/components/parameters/ZoplioEventHeader"
+        - $ref: "#/components/parameters/ZoplioSignatureHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookDelivery"
+      responses:
+        "200":
+          description: Acknowledge the delivery with any 2xx
+  meeting.cancelled:
+    post:
+      tags: [Webhooks]
+      summary: A meeting was cancelled
+      description: Same headers, signature and retry semantics as meeting.created.
+      parameters:
+        - $ref: "#/components/parameters/ZoplioEventHeader"
+        - $ref: "#/components/parameters/ZoplioSignatureHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookDelivery"
+      responses:
+        "200":
+          description: Acknowledge the delivery with any 2xx
+  negotiation.failed:
+    post:
+      tags: [Webhooks]
+      summary: Negotiation failed — no slot could be agreed
+      description: Same headers, signature and retry semantics as meeting.created.
+      parameters:
+        - $ref: "#/components/parameters/ZoplioEventHeader"
+        - $ref: "#/components/parameters/ZoplioSignatureHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookDelivery"
+      responses:
+        "200":
+          description: Acknowledge the delivery with any 2xx
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "API key with prefix zpl_ (Authorization: Bearer zpl_<hex>)"
+
+  parameters:
+    MeetingId:
+      name: id
+      in: path
+      required: true
+      description: Meeting id as returned by POST /v1/meetings
+      schema:
+        type: string
+    IdempotencyKey:
+      name: X-Idempotency-Key
+      in: header
+      required: false
+      description: 1-128 chars. Replaying the same key returns the originally created meeting.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    ZoplioEventHeader:
+      name: X-Zoplio-Event
+      in: header
+      required: true
+      description: The event name, identical to `event` in the body
+      schema:
+        $ref: "#/components/schemas/WebhookEvent"
+    ZoplioSignatureHeader:
+      name: X-Zoplio-Signature
+      in: header
+      required: true
+      description: Hex HMAC-SHA256 of the raw request body, keyed with the subscription's whsec_ secret
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+
+  headers:
+    X-RateLimit-Limit:
+      description: Requests allowed per minute for this API key
+      schema:
+        type: integer
+    X-RateLimit-Remaining:
+      description: Requests remaining in the current window
+      schema:
+        type: integer
+
+  responses:
+    ValidationFailed:
+      description: Request failed validation (code `validation_failed`, with per-field `details`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing/invalid API key (code `unauthorized`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    KeyExpired:
+      description: API key recognised but expired/inactive (code stays `unauthorized`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource missing or not owned by the key's user (code `not_found`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Over 60 requests/min for this key (code `rate_limited`)
+      headers:
+        X-RateLimit-Limit:
+          $ref: "#/components/headers/X-RateLimit-Limit"
+        X-RateLimit-Remaining:
+          $ref: "#/components/headers/X-RateLimit-Remaining"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UpstreamError:
+      description: An internal upstream service failed (code `upstream_error`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AuthUnavailable:
+      description: Auth backend unavailable — retry; your key is not necessarily bad (code `upstream_error`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - unauthorized
+                - rate_limited
+                - validation_failed
+                - not_found
+                - conflict
+                - upstream_error
+            message:
+              type: string
+            details:
+              type: array
+              description: Present on validation_failed
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+
+    MeetingStatus:
+      type: string
+      enum: [draft, negotiating, confirmed, cancelled, rescheduling]
+
+    WebhookEvent:
+      type: string
+      enum: [meeting.created, meeting.confirmed, meeting.cancelled, negotiation.failed]
+
+    Slot:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+
+    ParticipantInput:
+      type: object
+      description: Each participant needs a phone or an email
+      properties:
+        phone:
+          type: string
+          pattern: "^\\+[1-9][0-9]{6,14}$"
+          description: E.164, e.g. +420777123456
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+          maxLength: 200
+
+    CreateMeetingRequest:
+      type: object
+      required: [participants]
+      properties:
+        title:
+          type: string
+          maxLength: 300
+          description: Defaults to "Meeting"
+        durationMinutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+          default: 30
+        participants:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/ParticipantInput"
+        preferredDate:
+          type: string
+          format: date
+          description: YYYY-MM-DD. Required when preferredTime is set.
+        preferredTime:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          description: HH:MM, 24-hour
+        timezone:
+          type: string
+          description: IANA timezone the preferred date/time are expressed in (e.g. Europe/Prague)
+        earliestDate:
+          type: string
+          format: date
+        latestDate:
+          type: string
+          format: date
+        openAsk:
+          type: boolean
+          description: Ask participants for their availability instead of proposing slots
+        location:
+          type: string
+          maxLength: 500
+          description: Omitting it makes the meeting virtual
+        organizerAttending:
+          type: boolean
+          description: Set false for meetings the organizer does not attend
+
+    CreateMeetingResult:
+      type: object
+      required: [meetingId, negotiationId, status, proposedSlots]
+      properties:
+        meetingId:
+          type: string
+        negotiationId:
+          type: string
+        status:
+          $ref: "#/components/schemas/MeetingStatus"
+          description: negotiating on fresh creates; idempotent replays return the meeting's current status
+        proposedSlots:
+          type: array
+          items:
+            $ref: "#/components/schemas/Slot"
+
+    MeetingParticipant:
+      type: object
+      required: [status, attending]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        status:
+          type: string
+          description: pending, accepted, declined, counter-proposed, ...
+        attending:
+          type: boolean
+
+    MeetingDetail:
+      type: object
+      required: [id, title, status, participants]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: "#/components/schemas/MeetingStatus"
+        confirmedSlot:
+          $ref: "#/components/schemas/Slot"
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/MeetingParticipant"
+
+    MeetingSummary:
+      type: object
+      required: [id, title, status]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: "#/components/schemas/MeetingStatus"
+        confirmedSlot:
+          $ref: "#/components/schemas/Slot"
+        createdAt:
+          type: string
+          format: date-time
+
+    WebhookSummary:
+      type: object
+      required: [id, url, events, active]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookEvent"
+        active:
+          type: boolean
+          description: Subscriptions are disabled automatically after 10 consecutive delivery failures
+        createdAt:
+          type: string
+          format: date-time
+
+    WebhookDelivery:
+      type: object
+      required: [event, payload, timestamp]
+      properties:
+        event:
+          $ref: "#/components/schemas/WebhookEvent"
+        payload:
+          type: object
+          properties:
+            meetingId:
+              type: string
+            organizerUserId:
+              type: string
+            title:
+              type: string
+            negotiationId:
+              type: string
+              description: Present on confirmed/cancelled/failed events
+            participantEmails:
+              type: array
+              items:
+                type: string
+              description: Present on confirmed/cancelled/failed events
+            confirmedSlot:
+              $ref: "#/components/schemas/Slot"
+              description: Present on meeting.confirmed
+        timestamp:
+          type: string
+          format: date-time
+          description: Delivery timestamp (fresh per attempt)

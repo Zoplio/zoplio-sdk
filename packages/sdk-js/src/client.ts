@@ -1,0 +1,213 @@
+import { createHmac, timingSafeEqual } from 'crypto';
+import {
+  ApiErrorCode,
+  CancelMeetingResult,
+  CreateWebhookParams,
+  DeleteWebhookResult,
+  FieldDetail,
+  ListMeetingsParams,
+  ListMeetingsResult,
+  ListWebhooksResult,
+  MeetingDetail,
+  RescheduleMeetingParams,
+  RescheduleMeetingResult,
+  ScheduleMeetingOptions,
+  ScheduleMeetingParams,
+  ScheduleMeetingResult,
+  WebhookCreated,
+  ZoplioConfig,
+} from './types';
+
+/**
+ * Error thrown for every non-2xx API response. Carries the contract error
+ * envelope: `{ error: { code, message, details? } }`.
+ */
+export class ZoplioApiError extends Error {
+  /** Contract error code, e.g. `validation_failed`, `rate_limited`. */
+  readonly code: ApiErrorCode;
+  /** HTTP status of the response. */
+  readonly status: number;
+  /** Per-field details on `validation_failed` errors. */
+  readonly details?: FieldDetail[];
+
+  constructor(status: number, code: ApiErrorCode, message: string, details?: FieldDetail[]) {
+    super(message);
+    this.name = 'ZoplioApiError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+interface ErrorEnvelope {
+  error?: { code?: ApiErrorCode; message?: string; details?: FieldDetail[] };
+}
+
+/**
+ * Client for the Zoplio public API v1.
+ *
+ * ```ts
+ * const zoplio = new ZoplioClient({ apiKey: process.env.ZOPLIO_API_KEY! });
+ * const { meetingId } = await zoplio.scheduleMeeting({
+ *   title: 'Intro call',
+ *   participants: [{ email: 'petr@example.com' }],
+ * });
+ * ```
+ *
+ * Requires a `fetch` global (Node.js >= 18).
+ */
+export class ZoplioClient {
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+
+  constructor(config: ZoplioConfig) {
+    if (!config || typeof config.apiKey !== 'string' || config.apiKey.length === 0) {
+      throw new Error('ZoplioClient requires an apiKey (zpl_...)');
+    }
+    this.apiKey = config.apiKey;
+    this.baseUrl = (config.baseUrl || 'https://api.zoplio.com').replace(/\/+$/, '');
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: object,
+    extraHeaders?: Record<string, string>,
+  ): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+        ...extraHeaders,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      data = undefined;
+    }
+
+    if (!res.ok) {
+      const err = (data as ErrorEnvelope | undefined)?.error;
+      throw new ZoplioApiError(
+        res.status,
+        err?.code ?? 'upstream_error',
+        err?.message ?? `Zoplio API error: HTTP ${res.status}`,
+        err?.details,
+      );
+    }
+    return data as T;
+  }
+
+  // ── Meetings ───────────────────────────────────────────────────────
+
+  /**
+   * Create a meeting and start negotiating with the participants.
+   * `POST /v1/meetings`
+   */
+  async scheduleMeeting(
+    params: ScheduleMeetingParams,
+    options?: ScheduleMeetingOptions,
+  ): Promise<ScheduleMeetingResult> {
+    const headers = options?.idempotencyKey
+      ? { 'X-Idempotency-Key': options.idempotencyKey }
+      : undefined;
+    return this.request('POST', '/v1/meetings', params, headers);
+  }
+
+  /**
+   * Fetch one meeting you organize, with per-participant status.
+   * `GET /v1/meetings/:id`
+   */
+  async getMeeting(meetingId: string): Promise<MeetingDetail> {
+    return this.request('GET', `/v1/meetings/${encodeURIComponent(meetingId)}`);
+  }
+
+  /**
+   * List meetings you organize, newest first.
+   * `GET /v1/meetings?status=&limit=`
+   */
+  async listMeetings(params: ListMeetingsParams = {}): Promise<ListMeetingsResult> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.limit !== undefined) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return this.request('GET', `/v1/meetings${qs ? `?${qs}` : ''}`);
+  }
+
+  /**
+   * Cancel a meeting (idempotent — cancelling twice still returns `cancelled`).
+   * `POST /v1/meetings/:id/cancel`
+   */
+  async cancelMeeting(meetingId: string): Promise<CancelMeetingResult> {
+    return this.request('POST', `/v1/meetings/${encodeURIComponent(meetingId)}/cancel`);
+  }
+
+  /**
+   * Propose a new exact date+time to all participants.
+   * `POST /v1/meetings/:id/reschedule`
+   *
+   * Throws `ZoplioApiError` with code `conflict` when the requested time
+   * collides with a participant's availability or the negotiation state
+   * does not allow re-proposing.
+   */
+  async rescheduleMeeting(
+    meetingId: string,
+    params: RescheduleMeetingParams,
+  ): Promise<RescheduleMeetingResult> {
+    return this.request('POST', `/v1/meetings/${encodeURIComponent(meetingId)}/reschedule`, params);
+  }
+
+  // ── Webhooks ───────────────────────────────────────────────────────
+
+  /**
+   * Subscribe a URL to meeting lifecycle events. The returned `secret`
+   * (whsec_...) is shown exactly once — store it to verify deliveries.
+   * `POST /v1/webhooks`
+   */
+  async createWebhook(params: CreateWebhookParams): Promise<WebhookCreated> {
+    return this.request('POST', '/v1/webhooks', params);
+  }
+
+  /**
+   * List your webhook subscriptions (without secrets).
+   * `GET /v1/webhooks`
+   */
+  async listWebhooks(): Promise<ListWebhooksResult> {
+    return this.request('GET', '/v1/webhooks');
+  }
+
+  /**
+   * Delete one of your webhook subscriptions.
+   * `DELETE /v1/webhooks/:id`
+   */
+  async deleteWebhook(webhookId: string): Promise<DeleteWebhookResult> {
+    return this.request('DELETE', `/v1/webhooks/${encodeURIComponent(webhookId)}`);
+  }
+
+  /**
+   * Verify a webhook delivery: constant-time comparison of the
+   * `X-Zoplio-Signature` header against HMAC-SHA256(secret, rawBody),
+   * hex-encoded — exactly how Zoplio signs deliveries.
+   *
+   * Pass the RAW request body bytes/string (before any JSON parsing —
+   * re-serializing the parsed body may not be byte-identical).
+   */
+  static verifyWebhookSignature(
+    rawBody: string | Uint8Array,
+    signatureHeader: string,
+    secret: string,
+  ): boolean {
+    if (!signatureHeader || !secret) return false;
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    const provided = signatureHeader.trim().toLowerCase();
+    const a = Buffer.from(expected, 'utf8');
+    const b = Buffer.from(provided, 'utf8');
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  }
+}

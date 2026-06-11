@@ -1,0 +1,14 @@
+{
+  "name": "zoplio-example-webhook-receiver",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Minimal Express receiver for Zoplio webhooks with HMAC verification",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.0.0"
+  },
+  "license": "MIT"
+}
