@@ -18,6 +18,7 @@ export type ApiErrorCode =
   | 'validation_failed'
   | 'not_found'
   | 'conflict'
+  | 'quota_exceeded'
   | 'upstream_error';
 
 /** Per-field validation detail attached to `validation_failed` errors. */

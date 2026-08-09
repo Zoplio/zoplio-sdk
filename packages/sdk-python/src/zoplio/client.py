@@ -15,7 +15,7 @@ class ZoplioError(Exception):
     "details"?}}``:
 
     - ``code``: one of ``unauthorized``, ``rate_limited``, ``validation_failed``,
-      ``not_found``, ``conflict``, ``upstream_error``
+      ``not_found``, ``conflict``, ``quota_exceeded``, ``upstream_error``
     - ``status_code``: HTTP status of the response
     - ``details``: list of ``{"field", "message"}`` on ``validation_failed``
     """

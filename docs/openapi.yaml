@@ -28,8 +28,14 @@ info:
     Every non-2xx response uses one envelope:
     `{"error": {"code", "message", "details"?}}` with `code` one of
     `unauthorized`, `rate_limited`, `validation_failed`, `not_found`,
-    `conflict`, `upstream_error`. `validation_failed` adds
+    `conflict`, `quota_exceeded`, `upstream_error`. `validation_failed` adds
     `details: [{"field", "message"}]`.
+
+    ## Plans & quotas
+    Every account starts on the **free** plan: 5 confirmed meetings per month
+    (plus a monthly meeting-creation cap). Exceeding it returns `402` with code
+    `quota_exceeded` — upgrade to a paid plan (or ask us to lift the cap) to
+    continue. `paid` and `vip` plans are uncapped.
 
     ## Idempotency
     `POST /v1/meetings` accepts an `X-Idempotency-Key` header (1-128 chars).
@@ -43,8 +49,6 @@ info:
 servers:
   - url: https://api.zoplio.com
     description: Production
-  - url: http://localhost:3022
-    description: Local api-gateway
 
 security:
   - bearerAuth: []
@@ -107,6 +111,8 @@ paths:
           $ref: "#/components/responses/ValidationFailed"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
         "403":
           $ref: "#/components/responses/KeyExpired"
         "429":
@@ -546,6 +552,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    QuotaExceeded:
+      description: Free-tier meeting quota exhausted for this billing cycle (code `quota_exceeded`) — upgrade or contact us
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     UpstreamError:
       description: An internal upstream service failed (code `upstream_error`)
       content:
@@ -576,6 +588,7 @@ components:
                 - validation_failed
                 - not_found
                 - conflict
+                - quota_exceeded
                 - upstream_error
             message:
               type: string
@@ -597,7 +610,7 @@ components:
 
     WebhookEvent:
       type: string
-      enum: [meeting.created, meeting.confirmed, meeting.cancelled, negotiation.failed]
+      enum: [meeting.created, meeting.confirmed, meeting.cancelled, meeting.rescheduled, negotiation.failed]
 
     Slot:
       type: object

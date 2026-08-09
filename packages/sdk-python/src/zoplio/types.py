@@ -14,6 +14,7 @@ WEBHOOK_EVENTS = (
     "meeting.created",
     "meeting.confirmed",
     "meeting.cancelled",
+    "meeting.rescheduled",
     "negotiation.failed",
 )
 

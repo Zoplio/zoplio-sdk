@@ -4,16 +4,31 @@
   "description": "Official Zoplio Node.js/TypeScript SDK for the Zoplio API v1 (MIT)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npx --yes tsx@4.19.2 --test \"src/**/__tests__/*.test.ts\""
+    "test": "npx --yes tsx@4.19.2 --test \"src/**/__tests__/*.test.ts\"",
+    "prepublishOnly": "npm run build"
   },
   "license": "MIT",
   "type": "commonjs",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^6.0.2"

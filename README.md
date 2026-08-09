@@ -51,6 +51,26 @@ claude mcp add --transport http zoplio https://api.zoplio.com/mcp \
 # then just ask Claude: "set up 30 minutes with Jana next Tuesday afternoon"
 ```
 
+## Pricing
+
+You're billed per **confirmed** meeting — the agent negotiates for free and you
+only pay when a time is actually booked. Every account starts on the **free**
+plan with 5 confirmed meetings per month (no card required). Beyond that the API
+returns `402` with code `quota_exceeded`; upgrade to a paid plan to keep booking.
+For a CRM integration serving many end-users, all meetings booked with your API
+key roll up to your one account, so volume pricing applies as you grow. Talk to
+us at [zoplio.com](https://zoplio.com) for paid and enterprise plans.
+
+```ts
+try {
+  await zoplio.scheduleMeeting({ /* … */ });
+} catch (err) {
+  if (err instanceof ZoplioApiError && err.code === 'quota_exceeded') {
+    // free tier exhausted this month — prompt to upgrade
+  }
+}
+```
+
 ## Docs
 
 - [Quickstart](docs/quickstart.md) — keys, first meeting, webhooks, SDKs, MCP
