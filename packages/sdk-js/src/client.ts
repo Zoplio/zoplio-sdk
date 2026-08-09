@@ -152,8 +152,11 @@ export class ZoplioClient {
    * `POST /v1/meetings/:id/reschedule`
    *
    * Throws `ZoplioApiError` with code `conflict` when the requested time
-   * collides with a participant's availability or the negotiation state
-   * does not allow re-proposing.
+   * collides with a participant's availability, when the negotiation state
+   * does not allow re-proposing, or when the negotiation ran out of rounds -
+   * in that last case the meeting has been cancelled and every participant
+   * told. Throws code `validation_failed` when the requested time is already
+   * in the past; nothing changed and nobody was contacted.
    */
   async rescheduleMeeting(
     meetingId: string,

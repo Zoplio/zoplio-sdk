@@ -42,6 +42,13 @@ info:
     Replaying the same key returns the originally created meeting (with its
     current, possibly already-confirmed status) instead of creating a
     duplicate.
+
+    `POST /v1/meetings/{id}/reschedule` accepts the same header. Replaying a
+    key returns the original proposal instead of opening another negotiation
+    round; send a new key when you genuinely want to move the meeting again.
+    Rescheduling without a key is not safe to retry blindly - every call
+    consumes a negotiation round, and exhausting the round limit cancels the
+    meeting.
   contact:
     name: Zoplio
     url: https://zoplio.com
@@ -226,6 +233,7 @@ paths:
         that time, or the negotiation state does not allow re-proposing.
       parameters:
         - $ref: "#/components/parameters/MeetingId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -270,7 +278,10 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Requested time conflicts with a participant or the negotiation state
+          description: >-
+            Requested time conflicts with a participant or the negotiation
+            state, or the negotiation ran out of rounds - in that case the
+            meeting has been cancelled and every participant notified.
           content:
             application/json:
               schema:
@@ -306,7 +317,7 @@ paths:
                   minItems: 1
                   items:
                     $ref: "#/components/schemas/WebhookEvent"
-                  description: Defaults to all four events when omitted
+                  description: Defaults to all five events when omitted
       responses:
         "201":
           description: Subscription created
@@ -449,6 +460,28 @@ webhooks:
       responses:
         "200":
           description: Acknowledge the delivery with any 2xx
+  meeting.rescheduled:
+    post:
+      tags: [Webhooks]
+      summary: A confirmed meeting was un-confirmed to move to a new time
+      description: |
+        Sent the moment a confirmed meeting is re-opened for rescheduling —
+        its previous slot is no longer valid, and a new `meeting.confirmed`
+        (or `meeting.cancelled` / `negotiation.failed`) will follow when the
+        renegotiation resolves. The payload carries `previousSlot` (the slot
+        the meeting left); `confirmedSlot` is absent until the re-confirm.
+        Same headers, signature and retry semantics as meeting.created.
+      parameters:
+        - $ref: "#/components/parameters/ZoplioEventHeader"
+        - $ref: "#/components/parameters/ZoplioSignatureHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookDelivery"
+      responses:
+        "200":
+          description: Acknowledge the delivery with any 2xx
   negotiation.failed:
     post:
       tags: [Webhooks]
@@ -485,7 +518,10 @@ components:
       name: X-Idempotency-Key
       in: header
       required: false
-      description: 1-128 chars. Replaying the same key returns the originally created meeting.
+      description: >-
+        1-128 chars. On create, replaying the same key returns the originally
+        created meeting. On reschedule, it returns the original proposal
+        instead of opening another negotiation round.
       schema:
         type: string
         minLength: 1
