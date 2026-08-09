@@ -5,6 +5,13 @@
   "main": "index.js",
   "license": "MIT",
   "type": "commonjs",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "node --test"
   },
