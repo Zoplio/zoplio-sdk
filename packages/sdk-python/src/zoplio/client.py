@@ -36,14 +36,21 @@ class ZoplioError(Exception):
 class ZoplioClient:
     """Official Zoplio Python SDK client.
 
+    The account that owns the API key is the organizer: the meeting runs on
+    your calendar and Zoplio invites ``participants``. To arrange a meeting
+    for someone else, set ``organizer``.
+
     Usage::
 
         from zoplio import ZoplioClient
 
         zoplio = ZoplioClient(api_key="zpl_...")
         created = zoplio.schedule_meeting(
-            participants=[{"email": "petr@example.com", "name": "Petr"}],
+            participants=[{"phone": "+420777123456", "name": "Jana"}],
             title="Intro call",
+            preferred_date="2026-09-16",
+            preferred_time="14:00",
+            timezone="Europe/Prague",
         )
         print(created["meetingId"], created["status"])
     """
@@ -101,22 +108,47 @@ class ZoplioClient:
         location: Optional[str] = None,
         organizer_attending: Optional[bool] = None,
         idempotency_key: Optional[str] = None,
+        organizer: Optional[dict] = None,
     ) -> dict:
         """Create a meeting and start negotiating with the participants.
 
         ``POST /v1/meetings``
 
+        You (the account that owns the API key) are the organizer: the
+        meeting runs on your calendar and Zoplio messages every entry of
+        ``participants`` (one is enough). Set ``organizer`` to arrange a
+        meeting for someone else: they are then the organizer (their calendar
+        and timezone; not invited, told that the meeting is being arranged
+        and again once it confirms). A participant equal to your own number
+        or e-mail raises :class:`ZoplioError` with code ``validation_failed``.
+
+        Scheduling mode is picked by the date fields you send: exact
+        (``preferred_date`` + ``preferred_time`` + ``timezone``), day
+        (``preferred_date`` only), range (``earliest_date`` + ``latest_date``)
+        or open ask (``open_ask=True`` plus the window). With no date fields
+        Zoplio proposes one slot per working day over the next seven days at
+        the start of the organizer's working hours.
+
         :param participants: 1-8 dicts, each with ``phone`` (E.164) or
-            ``email``, plus optional ``name``.
+            ``email``, plus optional ``name``. The people Zoplio invites.
+        :param organizer: on-behalf mode: dict with ``phone`` or ``email``
+            (+ ``name``), the person the meeting is for when it is not you.
+            Omit it for your own meetings.
         :param preferred_date: ``YYYY-MM-DD`` (required when
             ``preferred_time`` is set).
         :param preferred_time: ``HH:MM`` 24-hour.
-        :param timezone: IANA timezone the date/time are expressed in.
-        :param idempotency_key: sent as ``X-Idempotency-Key`` — replaying the
+        :param timezone: IANA timezone the date/time are expressed in. Always
+            send it with ``preferred_time``: without it the time is read in
+            the organizer's stored timezone (your account's zone, UTC for an
+            account Zoplio has only seen by e-mail; for an on-behalf organizer
+            the phone's country zone, or UTC for an e-mail contact).
+        :param idempotency_key: sent as ``X-Idempotency-Key``; replaying the
             same key returns the originally created meeting.
         :returns: ``{"meetingId", "negotiationId", "status", "proposedSlots"}``
         """
         body: dict[str, Any] = {"participants": participants}
+        if organizer is not None:
+            body["organizer"] = organizer
         if title is not None:
             body["title"] = title
         if duration_minutes is not None:
@@ -142,7 +174,8 @@ class ZoplioClient:
         return self._request("POST", "/v1/meetings", json=body, headers=headers)
 
     def get_meeting(self, meeting_id: str) -> dict:
-        """Fetch one meeting you organize, with per-participant status.
+        """Fetch one meeting you created with this key, with each person's
+        status and role (``organizer`` or ``participant``).
 
         ``GET /v1/meetings/:id`` →
         ``{"id", "title", "status", "confirmedSlot"?, "participants"}``
@@ -152,7 +185,7 @@ class ZoplioClient:
     def list_meetings(
         self, status: Optional[str] = None, limit: Optional[int] = None
     ) -> dict:
-        """List meetings you organize, newest first.
+        """List meetings you created with this key (on-behalf ones included), newest first.
 
         ``GET /v1/meetings?status=&limit=`` → ``{"meetings": [...]}``
 
@@ -182,15 +215,26 @@ class ZoplioClient:
         preferred_date: str,
         preferred_time: str,
         timezone: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> dict:
         """Propose a new exact date+time to all participants.
 
         ``POST /v1/meetings/:id/reschedule`` →
         ``{"meetingId", "status": "negotiating", "proposedSlots"}``
 
+        :param timezone: IANA timezone the date/time are expressed in. Always
+            send it; without it the time is read in a stored timezone rather
+            than yours.
+        :param idempotency_key: sent as ``X-Idempotency-Key``. A replay
+            returns the original proposal instead of opening another
+            negotiation round; every un-keyed call consumes a round, and
+            exhausting the round limit cancels the meeting.
+
         Raises :class:`ZoplioError` with code ``conflict`` when the requested
-        time collides with a participant's availability or the negotiation
-        state does not allow re-proposing.
+        time collides with a participant's availability, the negotiation
+        state does not allow re-proposing, or the negotiation ran out of
+        rounds (the meeting is then cancelled and every participant told);
+        code ``validation_failed`` when the time is already in the past.
         """
         body: dict[str, Any] = {
             "preferredDate": preferred_date,
@@ -198,8 +242,12 @@ class ZoplioClient:
         }
         if timezone is not None:
             body["timezone"] = timezone
+        headers = {"X-Idempotency-Key": idempotency_key} if idempotency_key else None
         return self._request(
-            "POST", f"/v1/meetings/{quote(meeting_id, safe='')}/reschedule", json=body
+            "POST",
+            f"/v1/meetings/{quote(meeting_id, safe='')}/reschedule",
+            json=body,
+            headers=headers,
         )
 
     # ── Webhooks ────────────────────────────────────────
@@ -209,9 +257,10 @@ class ZoplioClient:
 
         ``POST /v1/webhooks`` → ``{"id", "url", "events", "secret"}``
 
-        The ``whsec_`` secret is returned exactly once — store it to verify
-        deliveries. ``events`` defaults to all of ``meeting.created``,
-        ``meeting.confirmed``, ``meeting.cancelled``, ``negotiation.failed``.
+        The ``whsec_`` secret is returned exactly once; store it to verify
+        deliveries. ``events`` defaults to all five: ``meeting.created``,
+        ``meeting.confirmed``, ``meeting.cancelled``, ``meeting.rescheduled``,
+        ``negotiation.failed``.
         """
         body: dict[str, Any] = {"url": url}
         if events is not None:
@@ -241,9 +290,9 @@ class ZoplioClient:
         """Verify a webhook delivery signature.
 
         Constant-time comparison of the ``X-Zoplio-Signature`` header against
-        ``HMAC-SHA256(secret, raw_body)`` hex-encoded — exactly how Zoplio
+        ``HMAC-SHA256(secret, raw_body)`` hex-encoded, exactly how Zoplio
         signs deliveries. Pass the RAW request body bytes (before JSON
-        parsing — re-serializing the parsed body may not be byte-identical).
+        parsing; re-serializing the parsed body may not be byte-identical).
         """
         if not signature_header or not secret:
             return False

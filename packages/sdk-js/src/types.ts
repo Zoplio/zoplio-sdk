@@ -1,6 +1,6 @@
 /**
  * Wire types for the Zoplio public API v1 (served by api-gateway under /v1).
- * Shapes mirror apps/api-gateway/src — these are the exact JSON bodies on the
+ * Shapes mirror apps/api-gateway/src: these are the exact JSON bodies on the
  * wire, not internal models.
  */
 
@@ -34,11 +34,12 @@ export type MeetingStatus =
   | 'cancelled'
   | 'rescheduling';
 
-/** Public webhook event names — the only events delivered to subscribers. */
+/** Public webhook event names: the only events delivered to subscribers. */
 export type WebhookEvent =
   | 'meeting.created'
   | 'meeting.confirmed'
   | 'meeting.cancelled'
+  | 'meeting.rescheduled'
   | 'negotiation.failed';
 
 /** A concrete time slot. ISO 8601 datetimes (UTC). */
@@ -47,7 +48,7 @@ export interface Slot {
   end: string;
 }
 
-/** Meeting participant input — each entry needs `phone` (E.164) or `email`. */
+/** A person (organizer or participant): needs `phone` (E.164) or `email`. */
 export interface ParticipantInput {
   /** E.164 phone number, e.g. `+420777123456`. */
   phone?: string;
@@ -56,28 +57,59 @@ export interface ParticipantInput {
   name?: string;
 }
 
+/**
+ * Body of `POST /v1/meetings`. The account that owns the API key is the
+ * organizer; `participants` are the people Zoplio invites. To arrange a
+ * meeting for someone else, set `organizer`.
+ *
+ * Scheduling mode is picked by the date fields you send: exact
+ * (`preferredDate` + `preferredTime` + `timezone`), day (`preferredDate`
+ * only), range (`earliestDate` + `latestDate`) or open ask (`openAsk: true`
+ * plus the window). With no date fields Zoplio proposes one slot per working
+ * day over the next seven days at the start of the organizer's working hours.
+ */
 export interface ScheduleMeetingParams {
   /** Max 300 chars. Defaults to "Meeting" server-side. */
   title?: string;
   /** Integer 5..1440. Defaults to 30 server-side. */
   durationMinutes?: number;
-  /** 1..8 participants, each with a phone or an email. */
+  /**
+   * On-behalf mode: the person the meeting is for when it is not you. Zoplio
+   * uses their calendar and timezone, does not invite them and tells them the
+   * meeting is being arranged. When omitted, you (the account that owns the
+   * API key) are the organizer.
+   */
+  organizer?: ParticipantInput;
+  /**
+   * The people Zoplio invites (1..8), each with a phone or an email; one is
+   * enough. Your own number or e-mail is rejected with `validation_failed`.
+   */
   participants: ParticipantInput[];
   /** YYYY-MM-DD. Required when `preferredTime` is set. */
   preferredDate?: string;
   /** HH:MM (24h). */
   preferredTime?: string;
-  /** IANA timezone the preferredDate/preferredTime are expressed in. */
+  /**
+   * IANA timezone the preferredDate/preferredTime are expressed in. Always
+   * send it with `preferredTime`: without it the time is read in the
+   * organizer's stored timezone (your account's zone, UTC for an account
+   * Zoplio has only seen by e-mail; for an on-behalf organizer the phone's
+   * country zone, or UTC for an e-mail contact).
+   */
   timezone?: string;
-  /** YYYY-MM-DD. */
+  /** YYYY-MM-DD. Start of the window for range and open-ask scheduling. */
   earliestDate?: string;
-  /** YYYY-MM-DD. */
+  /** YYYY-MM-DD. End of the window for range and open-ask scheduling. */
   latestDate?: string;
   /** Ask participants for their availability instead of proposing slots. */
   openAsk?: boolean;
   /** Max 500 chars. Omitting it makes the meeting virtual. */
   location?: string;
-  /** Set `false` for meetings the organizer does not attend. */
+  /**
+   * Set `false` when the organizer (you, or the on-behalf `organizer`) only
+   * arranges the meeting and will not attend; the invitees then meet among
+   * themselves, so list at least two of them.
+   */
   organizerAttending?: boolean;
 }
 
@@ -104,6 +136,11 @@ export interface MeetingParticipant {
   /** e.g. `pending`, `accepted`, `declined`, `counter-proposed`. */
   status: string;
   attending: boolean;
+  /**
+   * `organizer` is the person the meeting is for (you, or the on-behalf
+   * `organizer`); `participant` is an invitee.
+   */
+  role: 'organizer' | 'participant';
 }
 
 export interface MeetingDetail {
@@ -141,8 +178,21 @@ export interface RescheduleMeetingParams {
   preferredDate: string;
   /** HH:MM (24h). Required. */
   preferredTime: string;
-  /** IANA timezone the date/time are expressed in. */
+  /**
+   * IANA timezone the date/time are expressed in. Always send it; without it
+   * the time is read in a stored timezone rather than yours.
+   */
   timezone?: string;
+}
+
+export interface RescheduleMeetingOptions {
+  /**
+   * Sent as `X-Idempotency-Key` (1-128 chars). Replaying the same key returns
+   * the original proposal instead of opening another negotiation round, so a
+   * retry cannot walk the meeting into the round-limit cancellation. Send a
+   * new key when you genuinely want to move the meeting again.
+   */
+  idempotencyKey?: string;
 }
 
 export interface RescheduleMeetingResult {
@@ -154,7 +204,7 @@ export interface RescheduleMeetingResult {
 export interface CreateWebhookParams {
   /** Public http(s) endpoint. Private/internal hosts are rejected. */
   url: string;
-  /** Defaults to all four events when omitted. */
+  /** Defaults to all five events when omitted. */
   events?: WebhookEvent[];
 }
 
@@ -162,7 +212,7 @@ export interface WebhookCreated {
   id: string;
   url: string;
   events: WebhookEvent[];
-  /** `whsec_` signing secret — returned exactly once, at creation. */
+  /** `whsec_` signing secret, returned exactly once, at creation. */
   secret: string;
 }
 
@@ -198,6 +248,8 @@ export interface WebhookDeliveryBody {
     participantEmails?: string[];
     /** Present on meeting.confirmed. */
     confirmedSlot?: Slot;
+    /** Present on meeting.rescheduled: the slot the meeting left. */
+    previousSlot?: Slot;
     [key: string]: unknown;
   };
   /** ISO 8601 delivery timestamp. */

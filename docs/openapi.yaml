@@ -7,22 +7,38 @@ info:
     Zoplio is an AI scheduling agent. You create a meeting with who and roughly
     when; Zoplio reaches out to every participant (WhatsApp/email), negotiates a
     time everyone can make, and confirms it. This API is asynchronous by
-    design — `POST /v1/meetings` returns immediately with
+    design: `POST /v1/meetings` returns immediately with
     `status: negotiating`; track progress by polling `GET /v1/meetings/{id}`
     or by subscribing to webhooks.
+
+    ## Roles
+    The account that owns the API key is the organizer. `participants` are
+    the people Zoplio invites. To arrange a meeting for someone else, set
+    `organizer`.
+
+    You are a Zoplio user like anyone on WhatsApp: a meeting you create runs
+    on your calendar, in your timezone and working hours, Zoplio tells you
+    when the invitees answer, and it counts against your plan. Every entry of
+    `participants` (1-8) is invited; one is enough. Listing your own number
+    or e-mail as a participant is rejected with `400`. `organizer` is the
+    optional on-behalf mode (an agency booking for a client): that person is
+    then the organizer, every participant is still invited, and the meeting
+    still bills to your account.
 
     ## Authentication
     Every `/v1` route requires
     `Authorization: Bearer zpl_<hex>`. Invalid or unknown keys get `401`;
     recognised but expired/inactive keys get `403` (error code stays
     `unauthorized`). If the auth backend is unavailable the API answers `503`
-    (`upstream_error`) — an outage never reads as "your key is bad".
+    (`upstream_error`): an outage never reads as "your key is bad".
 
     ## Rate limiting
     60 requests/min per API key (sliding window). Authenticated responses
     carry `X-RateLimit-Limit` and `X-RateLimit-Remaining`; exceeding the
     window returns `429` with code `rate_limited`. Rejected requests still
-    count toward the window.
+    count toward the window. A shared per-IP ceiling of 300 requests/min
+    applies across all keys, and the sign-in and key-provisioning routes
+    allow 15 requests/min per IP.
 
     ## Errors
     Every non-2xx response uses one envelope:
@@ -32,10 +48,11 @@ info:
     `details: [{"field", "message"}]`.
 
     ## Plans & quotas
-    Every account starts on the **free** plan: 5 confirmed meetings per month
-    (plus a monthly meeting-creation cap). Exceeding it returns `402` with code
-    `quota_exceeded` — upgrade to a paid plan (or ask us to lift the cap) to
-    continue. `paid` and `vip` plans are uncapped.
+    Free plan: 3 confirmed meetings and 15 meeting requests per calendar
+    month (UTC). Meetings still being arranged count against the 3 until they
+    confirm or fall through. `402` with code `quota_exceeded` when a limit is
+    reached; the `message` says which one. `paid` and `vip` plans are
+    uncapped.
 
     ## Idempotency
     `POST /v1/meetings` accepts an `X-Idempotency-Key` header (1-128 chars).
@@ -94,6 +111,42 @@ paths:
       tags: [Meetings]
       summary: Create a meeting and start negotiation
       operationId: scheduleMeeting
+      description: |
+        Roles: the account that owns the API key is the organizer.
+        `participants` are the people Zoplio invites (one is enough). To
+        arrange a meeting for someone else, set `organizer`: that person is
+        then the organizer (their calendar and timezone; they are not
+        invited, Zoplio tells them the meeting is being arranged and again
+        when it confirms) and every participant is invited. A participant
+        equal to your own number or e-mail (or, on behalf, the organizer's)
+        is rejected with `400` (`validation_failed`).
+
+        Scheduling modes, picked by which date fields you send:
+        - Exact: `preferredDate` + `preferredTime` (+ `timezone`).
+          Participants get a yes/no for that one slot.
+        - Day: `preferredDate` only. Participants get the organizer's free
+          slots on that day (a weekend is honoured when you name one).
+        - Range: `earliestDate` + `latestDate`. Zoplio proposes free
+          working-day slots across the window.
+        - Open ask: `openAsk: true` (+ `earliestDate`/`latestDate` as the
+          window). Zoplio asks each participant what time suits them instead
+          of proposing slots.
+
+        With no date fields at all, Zoplio looks at the seven days from
+        tomorrow and, with a free calendar, proposes one slot per working
+        day at the start of the organizer's working hours (09:00 unless they
+        set otherwise; weekends excluded). Slots are shown to each invitee in
+        their own timezone, so a 09:00 Prague slot reads as 03:00 in New
+        York. Prefer `earliestDate`/`latestDate` on working days unless the
+        user asks for weekends.
+
+        Always send `timezone` with `preferredTime`. Without it Zoplio reads
+        the time in the organizer's stored timezone: your account's zone
+        (a WhatsApp account's phone country zone, or the browser zone
+        captured at dashboard sign-in; UTC for an account Zoplio has only
+        seen by e-mail, such as a dev-provisioned key), or for an on-behalf
+        `organizer` the phone's country zone for a phone contact and UTC for
+        an e-mail contact.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -130,9 +183,9 @@ paths:
           $ref: "#/components/responses/AuthUnavailable"
     get:
       tags: [Meetings]
-      summary: List meetings you organize
+      summary: List meetings you created with this key
       operationId: listMeetings
-      description: Newest first. Only meetings owned by the API key's user are returned.
+      description: Newest first. Returns the meetings you created with this key, on-behalf ones included.
       parameters:
         - name: status
           in: query
@@ -149,7 +202,7 @@ paths:
             default: 20
       responses:
         "200":
-          description: Meetings owned by the key's user
+          description: Meetings you created with this key
           content:
             application/json:
               schema:
@@ -197,7 +250,7 @@ paths:
       tags: [Meetings]
       summary: Cancel a meeting
       operationId: cancelMeeting
-      description: Idempotent — cancelling an already-cancelled meeting returns `cancelled` again.
+      description: Idempotent. Cancelling an already-cancelled meeting returns `cancelled` again.
       parameters:
         - $ref: "#/components/parameters/MeetingId"
       responses:
@@ -252,7 +305,7 @@ paths:
                   description: HH:MM, 24-hour
                 timezone:
                   type: string
-                  description: IANA timezone the date/time are expressed in (e.g. Europe/Prague)
+                  description: IANA timezone the date/time are expressed in (e.g. Europe/Prague). Always send it; without it the time is read in a stored timezone rather than yours.
       responses:
         "200":
           description: New slot proposed to participants
@@ -299,7 +352,7 @@ paths:
       description: |
         Subscribes a public http(s) URL to meeting lifecycle events. URLs
         resolving to private/internal hosts are rejected (`validation_failed`).
-        The returned `whsec_` secret is shown exactly once — store it to
+        The returned `whsec_` secret is shown exactly once. Store it to
         verify delivery signatures.
       requestBody:
         required: true
@@ -337,7 +390,7 @@ paths:
                       $ref: "#/components/schemas/WebhookEvent"
                   secret:
                     type: string
-                    description: whsec_ signing secret — returned only here
+                    description: whsec_ signing secret, returned only here
         "400":
           $ref: "#/components/responses/ValidationFailed"
         "401":
@@ -431,7 +484,7 @@ webhooks:
   meeting.confirmed:
     post:
       tags: [Webhooks]
-      summary: All participants accepted — meeting confirmed
+      summary: All participants accepted, meeting confirmed
       description: Same headers, signature and retry semantics as meeting.created. The payload includes `confirmedSlot`.
       parameters:
         - $ref: "#/components/parameters/ZoplioEventHeader"
@@ -465,7 +518,7 @@ webhooks:
       tags: [Webhooks]
       summary: A confirmed meeting was un-confirmed to move to a new time
       description: |
-        Sent the moment a confirmed meeting is re-opened for rescheduling —
+        Sent the moment a confirmed meeting is re-opened for rescheduling:
         its previous slot is no longer valid, and a new `meeting.confirmed`
         (or `meeting.cancelled` / `negotiation.failed`) will follow when the
         renegotiation resolves. The payload carries `previousSlot` (the slot
@@ -485,7 +538,7 @@ webhooks:
   negotiation.failed:
     post:
       tags: [Webhooks]
-      summary: Negotiation failed — no slot could be agreed
+      summary: Negotiation failed, no slot could be agreed
       description: Same headers, signature and retry semantics as meeting.created.
       parameters:
         - $ref: "#/components/parameters/ZoplioEventHeader"
@@ -578,7 +631,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     RateLimited:
-      description: Over 60 requests/min for this key (code `rate_limited`)
+      description: Over 60 requests/min for this key, or over the shared per-IP ceiling (code `rate_limited`)
       headers:
         X-RateLimit-Limit:
           $ref: "#/components/headers/X-RateLimit-Limit"
@@ -589,7 +642,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     QuotaExceeded:
-      description: Free-tier meeting quota exhausted for this billing cycle (code `quota_exceeded`) — upgrade or contact us
+      description: A free-plan limit was reached this calendar month (code `quota_exceeded`); `message` says whether it is the 3 confirmed meetings or the 15 meeting requests
       content:
         application/json:
           schema:
@@ -601,7 +654,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     AuthUnavailable:
-      description: Auth backend unavailable — retry; your key is not necessarily bad (code `upstream_error`)
+      description: Auth backend unavailable. Retry; your key is not necessarily bad (code `upstream_error`)
       content:
         application/json:
           schema:
@@ -676,6 +729,11 @@ components:
 
     CreateMeetingRequest:
       type: object
+      description: >-
+        Who to invite (`participants`) and roughly when. The account that
+        owns the API key is the organizer; set `organizer` only to arrange a
+        meeting for someone else. See the POST /v1/meetings description for
+        the scheduling modes and the no-date default.
       required: [participants]
       properties:
         title:
@@ -687,12 +745,22 @@ components:
           minimum: 5
           maximum: 1440
           default: 30
+        organizer:
+          $ref: "#/components/schemas/ParticipantInput"
+          description: >-
+            On-behalf mode: the person the meeting is for when it is not you.
+            Zoplio uses their calendar and timezone, does not invite them and
+            tells them the meeting is being arranged. When omitted, you (the
+            account that owns the API key) are the organizer.
         participants:
           type: array
           minItems: 1
           maxItems: 8
           items:
             $ref: "#/components/schemas/ParticipantInput"
+          description: >-
+            The people Zoplio invites (1-8); one is enough. Your own number
+            or e-mail is rejected here with `400`.
         preferredDate:
           type: string
           format: date
@@ -703,13 +771,21 @@ components:
           description: HH:MM, 24-hour
         timezone:
           type: string
-          description: IANA timezone the preferred date/time are expressed in (e.g. Europe/Prague)
+          description: >-
+            IANA timezone the preferred date/time are expressed in (e.g.
+            Europe/Prague). Always send it with preferredTime; without it the
+            time is read in the organizer's stored timezone (your account's
+            zone, which is UTC for an account Zoplio has only seen by e-mail;
+            for an on-behalf organizer the phone's country zone or UTC for an
+            e-mail contact).
         earliestDate:
           type: string
           format: date
+          description: YYYY-MM-DD. Start of the window for range and open-ask scheduling.
         latestDate:
           type: string
           format: date
+          description: YYYY-MM-DD. End of the window for range and open-ask scheduling.
         openAsk:
           type: boolean
           description: Ask participants for their availability instead of proposing slots
@@ -719,7 +795,10 @@ components:
           description: Omitting it makes the meeting virtual
         organizerAttending:
           type: boolean
-          description: Set false for meetings the organizer does not attend
+          description: >-
+            Set false when the organizer (you, or the on-behalf `organizer`)
+            only arranges the meeting and will not attend; the invitees then
+            meet among themselves, so list at least two of them.
 
     CreateMeetingResult:
       type: object
@@ -739,7 +818,7 @@ components:
 
     MeetingParticipant:
       type: object
-      required: [status, attending]
+      required: [status, attending, role]
       properties:
         name:
           type: string
@@ -752,6 +831,12 @@ components:
           description: pending, accepted, declined, counter-proposed, ...
         attending:
           type: boolean
+        role:
+          type: string
+          enum: [organizer, participant]
+          description: >-
+            `organizer` is the person the meeting is for (you, or the
+            on-behalf `organizer`); `participant` is an invitee.
 
     MeetingDetail:
       type: object
@@ -831,6 +916,9 @@ components:
             confirmedSlot:
               $ref: "#/components/schemas/Slot"
               description: Present on meeting.confirmed
+            previousSlot:
+              $ref: "#/components/schemas/Slot"
+              description: Present on meeting.rescheduled (the slot the meeting left)
         timestamp:
           type: string
           format: date-time

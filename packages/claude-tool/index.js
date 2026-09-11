@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * @zoplio/claude-tool — tiny config helper for connecting MCP clients
+ * @zoplio/claude-tool: tiny config helper for connecting MCP clients
  * (Claude Code, Claude Desktop, the Anthropic API MCP connector) to the
  * Zoplio hosted MCP server. Docs-first package: see README.md. No runtime
  * dependencies on purpose.
@@ -20,7 +20,7 @@ const TOOLS = [
   'list_meetings', // GET    /v1/meetings
   'cancel_meeting', // POST   /v1/meetings/:id/cancel
   'reschedule_meeting', // POST   /v1/meetings/:id/reschedule
-  // Webhook management (POST/GET/DELETE /v1/webhooks) is REST/SDK-only —
+  // Webhook management (POST/GET/DELETE /v1/webhooks) is REST/SDK-only:
   // webhooks are an integration concern, not an in-conversation agent action.
 ];
 

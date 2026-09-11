@@ -1,4 +1,4 @@
-"""Webhook HMAC verification — pinned against the SAME vector the JS SDK and
+"""Webhook HMAC verification, pinned against the SAME vector the JS SDK and
 the webhooks service use (packages/sdk-js/src/__tests__/client.test.ts and
 apps/webhooks/src/services/__tests__/webhookSignature.test.ts). A drift here
 silently breaks every Python consumer's signature check, so this must match

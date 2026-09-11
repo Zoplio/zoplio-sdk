@@ -29,7 +29,7 @@ class Slot:
 
 @dataclass
 class ParticipantInput:
-    """Meeting participant input — needs ``phone`` (E.164) or ``email``."""
+    """A person (organizer or participant): needs ``phone`` (E.164) or ``email``."""
 
     phone: Optional[str] = None
     email: Optional[str] = None
@@ -38,10 +38,12 @@ class ParticipantInput:
 
 @dataclass
 class MeetingParticipant:
-    """Participant as returned by ``GET /v1/meetings/:id``."""
+    """Person as returned by ``GET /v1/meetings/:id``: the organizer entry
+    (you, or the on-behalf ``organizer``) and one entry per invitee."""
 
     status: str  # pending, accepted, declined, counter-proposed, ...
     attending: bool
+    role: str  # "organizer" | "participant"
     name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
@@ -96,9 +98,10 @@ class WebhookDelivery:
 
     Verify ``X-Zoplio-Signature`` over the raw body with
     :meth:`zoplio.ZoplioClient.verify_webhook_signature` before trusting it.
-    ``payload`` carries ``meetingId``, ``organizerUserId``, ``title`` and — on
-    confirmed/cancelled/failed events — ``negotiationId``,
-    ``participantEmails`` and (when confirmed) ``confirmedSlot``.
+    ``payload`` carries ``meetingId``, ``organizerUserId``, ``title`` and, on
+    confirmed/cancelled/failed events, ``negotiationId`` and
+    ``participantEmails``; ``confirmedSlot`` when confirmed and
+    ``previousSlot`` (the slot the meeting left) on ``meeting.rescheduled``.
     """
 
     event: str  # one of WEBHOOK_EVENTS, also in the X-Zoplio-Event header

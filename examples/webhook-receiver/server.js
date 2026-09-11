@@ -23,7 +23,7 @@ if (!SECRET) {
 
 const app = express();
 
-// IMPORTANT: verify against the RAW body — re-serialized JSON may not match.
+// IMPORTANT: verify against the RAW body; re-serialized JSON may not match.
 app.post('/zoplio-webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const signature = req.get('x-zoplio-signature') ?? '';
   const expected = crypto.createHmac('sha256', SECRET).update(req.body).digest('hex');
@@ -33,7 +33,7 @@ app.post('/zoplio-webhook', express.raw({ type: 'application/json' }), (req, res
     crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 
   if (!valid) {
-    console.warn('invalid signature — dropping delivery');
+    console.warn('invalid signature, dropping delivery');
     return res.status(401).end();
   }
 
@@ -52,7 +52,7 @@ app.post('/zoplio-webhook', express.raw({ type: 'application/json' }), (req, res
       console.log('unhandled event', event);
   }
 
-  // Respond 2xx fast — Zoplio retries non-2xx deliveries (1m, 5m) and
+  // Respond 2xx fast: Zoplio retries non-2xx deliveries (1m, 5m) and
   // disables the subscription after 10 consecutive failures.
   res.status(204).end();
 });

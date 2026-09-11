@@ -4,14 +4,14 @@ Thanks for helping make the Zoplio SDK better!
 
 ## What lives here
 
-This repo is Zoplio's **open SDK**: client libraries (`packages/sdk-js`, `packages/sdk-python`), the Claude/MCP connector (`packages/claude-tool`), API docs and examples. The hosted agent engine is a separate, closed codebase — engine behavior questions and scheduling bugs belong to support, not this tracker.
+This repo is Zoplio's **open SDK**: client libraries (`packages/sdk-js`, `packages/sdk-python`), the Claude/MCP connector (`packages/claude-tool`), API docs and examples. The hosted agent engine is a separate, closed codebase; engine behavior questions and scheduling bugs belong to support, not this tracker.
 
 Great contributions: SDK bug fixes, typed-response improvements, new integration examples, adapters built on the SDKs (Discord, Teams, Telegram, …), docs fixes.
 
 ## Ground rules
 
-- **Wording:** Zoplio is "open SDK" / "developer-first with open client libraries" — the product itself is a hosted API, not open source and not self-hostable. Docs changes should keep that framing accurate.
-- **No secrets or internal endpoints** in code, tests, or docs — examples use `https://api.zoplio.com` and placeholder keys (`zpl_YOUR_KEY`).
+- **Wording:** Zoplio is "open SDK" / "developer-first with open client libraries"; the product itself is a hosted API, not open source and not self-hostable. Docs changes should keep that framing accurate.
+- **No secrets or internal endpoints** in code, tests, or docs: examples use `https://api.zoplio.com` and placeholder keys (`zpl_YOUR_KEY`).
 - Keep the JS and Python clients in 1:1 method parity; if you change one, mirror the other (or note the gap in the PR).
 - Tests: `npm test` in `packages/sdk-js` and `packages/claude-tool`; `python -m py_compile` at minimum for `packages/sdk-python`.
 

@@ -9,6 +9,7 @@ import {
   ListMeetingsResult,
   ListWebhooksResult,
   MeetingDetail,
+  RescheduleMeetingOptions,
   RescheduleMeetingParams,
   RescheduleMeetingResult,
   ScheduleMeetingOptions,
@@ -50,9 +51,16 @@ interface ErrorEnvelope {
  * const zoplio = new ZoplioClient({ apiKey: process.env.ZOPLIO_API_KEY! });
  * const { meetingId } = await zoplio.scheduleMeeting({
  *   title: 'Intro call',
- *   participants: [{ email: 'petr@example.com' }],
+ *   participants: [{ phone: '+420777123456', name: 'Jana' }],
+ *   preferredDate: '2026-09-16',
+ *   preferredTime: '14:00',
+ *   timezone: 'Europe/Prague',
  * });
  * ```
+ *
+ * The account that owns the API key is the organizer: the meeting runs on
+ * your calendar and Zoplio invites `participants`. To arrange a meeting for
+ * someone else, set `organizer`.
  *
  * Requires a `fetch` global (Node.js >= 18).
  */
@@ -108,6 +116,15 @@ export class ZoplioClient {
   /**
    * Create a meeting and start negotiating with the participants.
    * `POST /v1/meetings`
+   *
+   * You (the account that owns the API key) are the organizer: the meeting
+   * runs on your calendar and Zoplio messages every entry of
+   * `params.participants` (one is enough). Set `params.organizer` to arrange
+   * a meeting for someone else: they are then the organizer (their calendar
+   * and timezone; not invited, told that the meeting is being arranged and
+   * again once it confirms). A participant equal to your own number or
+   * e-mail throws `ZoplioApiError` with code `validation_failed`.
+   * Always send `timezone` with `preferredTime`.
    */
   async scheduleMeeting(
     params: ScheduleMeetingParams,
@@ -120,7 +137,8 @@ export class ZoplioClient {
   }
 
   /**
-   * Fetch one meeting you organize, with per-participant status.
+   * Fetch one meeting you created with this key, with each person's status
+   * and role (`organizer` or `participant`).
    * `GET /v1/meetings/:id`
    */
   async getMeeting(meetingId: string): Promise<MeetingDetail> {
@@ -128,7 +146,7 @@ export class ZoplioClient {
   }
 
   /**
-   * List meetings you organize, newest first.
+   * List meetings you created with this key (on-behalf ones included), newest first.
    * `GET /v1/meetings?status=&limit=`
    */
   async listMeetings(params: ListMeetingsParams = {}): Promise<ListMeetingsResult> {
@@ -140,7 +158,7 @@ export class ZoplioClient {
   }
 
   /**
-   * Cancel a meeting (idempotent — cancelling twice still returns `cancelled`).
+   * Cancel a meeting (idempotent: cancelling twice still returns `cancelled`).
    * `POST /v1/meetings/:id/cancel`
    */
   async cancelMeeting(meetingId: string): Promise<CancelMeetingResult> {
@@ -151,9 +169,13 @@ export class ZoplioClient {
    * Propose a new exact date+time to all participants.
    * `POST /v1/meetings/:id/reschedule`
    *
+   * Pass `options.idempotencyKey` so a retry replays the original proposal
+   * instead of opening another negotiation round: every un-keyed call
+   * consumes a round, and exhausting the round limit cancels the meeting.
+   *
    * Throws `ZoplioApiError` with code `conflict` when the requested time
    * collides with a participant's availability, when the negotiation state
-   * does not allow re-proposing, or when the negotiation ran out of rounds -
+   * does not allow re-proposing, or when the negotiation ran out of rounds:
    * in that last case the meeting has been cancelled and every participant
    * told. Throws code `validation_failed` when the requested time is already
    * in the past; nothing changed and nobody was contacted.
@@ -161,15 +183,25 @@ export class ZoplioClient {
   async rescheduleMeeting(
     meetingId: string,
     params: RescheduleMeetingParams,
+    options?: RescheduleMeetingOptions,
   ): Promise<RescheduleMeetingResult> {
-    return this.request('POST', `/v1/meetings/${encodeURIComponent(meetingId)}/reschedule`, params);
+    const headers = options?.idempotencyKey
+      ? { 'X-Idempotency-Key': options.idempotencyKey }
+      : undefined;
+    return this.request(
+      'POST',
+      `/v1/meetings/${encodeURIComponent(meetingId)}/reschedule`,
+      params,
+      headers,
+    );
   }
 
   // ── Webhooks ───────────────────────────────────────────────────────
 
   /**
-   * Subscribe a URL to meeting lifecycle events. The returned `secret`
-   * (whsec_...) is shown exactly once — store it to verify deliveries.
+   * Subscribe a URL to meeting lifecycle events (all five when `events` is
+   * omitted). The returned `secret` (whsec_...) is shown exactly once: store
+   * it to verify deliveries.
    * `POST /v1/webhooks`
    */
   async createWebhook(params: CreateWebhookParams): Promise<WebhookCreated> {
@@ -195,9 +227,9 @@ export class ZoplioClient {
   /**
    * Verify a webhook delivery: constant-time comparison of the
    * `X-Zoplio-Signature` header against HMAC-SHA256(secret, rawBody),
-   * hex-encoded — exactly how Zoplio signs deliveries.
+   * hex-encoded, exactly how Zoplio signs deliveries.
    *
-   * Pass the RAW request body bytes/string (before any JSON parsing —
+   * Pass the RAW request body bytes/string (before any JSON parsing:
    * re-serializing the parsed body may not be byte-identical).
    */
   static verifyWebhookSignature(
