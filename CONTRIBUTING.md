@@ -21,4 +21,6 @@ Great contributions: SDK bug fixes, typed-response improvements, new integration
 2. PR with a short description of behavior before/after.
 3. CI must be green; a maintainer reviews and merges.
 
+Maintainers publish the packages from this repo; the steps are in [docs/RELEASING.md](docs/RELEASING.md).
+
 By contributing you agree your contributions are licensed under the MIT license of this repository.

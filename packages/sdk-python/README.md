@@ -1,6 +1,6 @@
 # zoplio (Python SDK)
 
-Official Zoplio Python SDK for the [Zoplio API v1](../../docs/quickstart.md). MIT licensed.
+Official Zoplio Python SDK for the [Zoplio API v1](https://github.com/Zoplio/zoplio-sdk/blob/main/docs/quickstart.md). MIT licensed.
 
 Zoplio schedules meetings for you: you say who to invite and roughly when, Zoplio negotiates with every invitee over WhatsApp/email and confirms a slot.
 

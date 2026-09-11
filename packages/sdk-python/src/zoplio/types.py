@@ -98,10 +98,13 @@ class WebhookDelivery:
 
     Verify ``X-Zoplio-Signature`` over the raw body with
     :meth:`zoplio.ZoplioClient.verify_webhook_signature` before trusting it.
-    ``payload`` carries ``meetingId``, ``organizerUserId``, ``title`` and, on
-    confirmed/cancelled/failed events, ``negotiationId`` and
-    ``participantEmails``; ``confirmedSlot`` when confirmed and
-    ``previousSlot`` (the slot the meeting left) on ``meeting.rescheduled``.
+    ``payload`` carries ``meetingId``, ``organizerUserId``,
+    ``billingAccountId`` (the account that owns the API key; equals
+    ``organizerUserId`` unless the meeting was arranged on behalf of someone
+    else), ``title`` and, on confirmed/cancelled/failed events,
+    ``negotiationId`` and ``participantEmails``; ``confirmedSlot`` when
+    confirmed and ``previousSlot`` (the slot the meeting left) on
+    ``meeting.rescheduled``.
     """
 
     event: str  # one of WEBHOOK_EVENTS, also in the X-Zoplio-Event header

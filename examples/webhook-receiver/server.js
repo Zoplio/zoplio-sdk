@@ -42,10 +42,12 @@ app.post('/zoplio-webhook', express.raw({ type: 'application/json' }), (req, res
 
   switch (event) {
     case 'meeting.confirmed':
-      // payload: { meetingId, organizerUserId, negotiationId, participantEmails, confirmedSlot, title }
+      // payload: { meetingId, organizerUserId, billingAccountId, negotiationId, participantEmails, confirmedSlot, title }
+      // billingAccountId is the account that owns the API key; it equals
+      // organizerUserId unless the meeting was arranged on behalf of someone else
       break;
     case 'meeting.rescheduled':
-      // payload: { meetingId, organizerUserId, title, previousSlot }; a fresh
+      // payload: { meetingId, organizerUserId, billingAccountId, title, previousSlot }; a fresh
       // meeting.confirmed (or a cancellation) follows when the move resolves
       break;
     case 'meeting.cancelled':

@@ -115,6 +115,8 @@ curl -X POST https://api.zoplio.com/v1/meetings/$MEETING_ID/reschedule \
 
 Five events are available: `meeting.created`, `meeting.confirmed`, `meeting.cancelled`, `meeting.rescheduled` and `negotiation.failed`. Omit `events` to subscribe to all five.
 
+The `url` must be a public https URL. The host is DNS-resolved and validated at subscribe time: `http` URLs, hosts that do not resolve (the `your.app` placeholder below included, until you swap in your own host) and private/internal hosts answer `400 validation_failed`.
+
 ```bash
 curl -X POST https://api.zoplio.com/v1/webhooks \
   -H "Authorization: Bearer $ZOPLIO_API_KEY" \
@@ -122,7 +124,7 @@ curl -X POST https://api.zoplio.com/v1/webhooks \
   -d '{ "url": "https://your.app/zoplio-webhook", "events": ["meeting.created", "meeting.confirmed", "meeting.rescheduled", "meeting.cancelled", "negotiation.failed"] }'
 ```
 
-The response contains the signing `secret` (`whsec_...`), **shown once**. Deliveries are `POST {event, payload, timestamp}` with headers `X-Zoplio-Event` and `X-Zoplio-Signature` (lowercase-hex HMAC-SHA256 of the raw body). Verify with the SDK helpers or 10 lines of crypto; see [examples/webhook-receiver](../examples/webhook-receiver). Respond 2xx within 10s. Failed deliveries retry after 1 m and 5 m; subscriptions auto-disable after 10 consecutive failures.
+The response contains the signing `secret` (`whsec_...`), **shown once**. Deliveries are `POST {event, payload, timestamp}` with headers `X-Zoplio-Event` and `X-Zoplio-Signature` (lowercase-hex HMAC-SHA256 of the raw body). `payload` always carries `meetingId`, `organizerUserId` and `billingAccountId` (the account that owns the API key; equals `organizerUserId` unless the meeting was arranged on behalf of someone else); the per-event fields are in [openapi.yaml](openapi.yaml). Verify with the SDK helpers or 10 lines of crypto; see [examples/webhook-receiver](../examples/webhook-receiver). Respond 2xx within 10s. Failed deliveries retry after 1 m and 5 m; subscriptions auto-disable after 10 consecutive failures.
 
 `meeting.rescheduled` fires the moment a confirmed meeting re-opens to move; its payload carries `previousSlot`, and a fresh `meeting.confirmed` (or a cancellation) follows when the renegotiation resolves.
 

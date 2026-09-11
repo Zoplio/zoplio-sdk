@@ -350,10 +350,13 @@ paths:
       summary: Create a webhook subscription
       operationId: createWebhook
       description: |
-        Subscribes a public http(s) URL to meeting lifecycle events. URLs
-        resolving to private/internal hosts are rejected (`validation_failed`).
-        The returned `whsec_` secret is shown exactly once. Store it to
-        verify delivery signatures.
+        Subscribes a public https URL to meeting lifecycle events. The host
+        is DNS-resolved and validated at subscribe time: `http` URLs, hosts
+        that do not resolve, and hosts resolving to private/internal
+        addresses are rejected (`validation_failed`), so a placeholder such
+        as `https://your.app/...` fails until it points at a live public
+        host. The returned `whsec_` secret is shown exactly once. Store it
+        to verify delivery signatures.
       requestBody:
         required: true
         content:
@@ -365,6 +368,7 @@ paths:
                 url:
                   type: string
                   format: uri
+                  description: Public https URL. The host is DNS-resolved and validated at subscribe time
                 events:
                   type: array
                   minItems: 1
@@ -903,6 +907,9 @@ components:
               type: string
             organizerUserId:
               type: string
+            billingAccountId:
+              type: string
+              description: The account that owns the API key; equals organizerUserId unless the meeting was arranged on behalf of someone else
             title:
               type: string
             negotiationId:

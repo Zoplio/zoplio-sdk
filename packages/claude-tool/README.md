@@ -2,7 +2,7 @@
 
 Connect Claude to Zoplio. Zoplio is an AI scheduling agent: you tell it who to invite and roughly when, it negotiates with every invitee over WhatsApp/email and confirms a slot. This package documents the Zoplio hosted MCP server so Claude (Claude Code, Claude Desktop, or any MCP client) can schedule real meetings.
 
-> **Status:** the hosted MCP endpoint lives on the same gateway as REST API v1 (`/mcp`, Streamable HTTP, stateless) and exposes five meeting tools through the same service layer and the same `zpl_` API keys. Webhook management is REST/SDK-only. The [JS](../sdk-js/README.md)/[Python](../sdk-python/README.md) SDKs cover the full REST surface.
+> **Status:** the hosted MCP endpoint lives on the same gateway as REST API v1 (`/mcp`, Streamable HTTP, stateless) and exposes five meeting tools through the same service layer and the same `zpl_` API keys. Webhook management is REST/SDK-only. The [JS](https://github.com/Zoplio/zoplio-sdk/tree/main/packages/sdk-js)/[Python](https://github.com/Zoplio/zoplio-sdk/tree/main/packages/sdk-python) SDKs cover the full REST surface.
 
 ## Install
 
@@ -14,7 +14,7 @@ The package is docs plus a tiny dependency-free config helper; you can also just
 
 ## Connect
 
-You need a Zoplio API key (`zpl_...`). In production, mint one in the dashboard at [zoplio.com](https://zoplio.com). On a development environment the provisioning call needs an `X-Provision-Secret` header, which the Zoplio team hands out (see the [API quickstart](../../docs/quickstart.md#1-get-an-api-key)).
+You need a Zoplio API key (`zpl_...`). In production, mint one in the dashboard at [zoplio.com](https://zoplio.com). On a development environment the provisioning call needs an `X-Provision-Secret` header, which the Zoplio team hands out (see the [API quickstart](https://github.com/Zoplio/zoplio-sdk/blob/main/docs/quickstart.md#1-get-an-api-key)).
 
 ### Claude Code (CLI)
 
@@ -63,14 +63,14 @@ The server tells Claude the same thing at connect time: "You act for the account
 
 ## Tools
 
-Each tool maps 1:1 to a Zoplio API v1 operation ([full schemas](../../docs/openapi.yaml)):
+Each tool maps 1:1 to a Zoplio API v1 operation ([full schemas](https://github.com/Zoplio/zoplio-sdk/blob/main/docs/openapi.yaml)):
 
 | Tool | REST operation | What it does |
 |------|----------------|--------------|
 | `schedule_meeting` | `POST /v1/meetings` | Create a meeting and start negotiating. Takes `participants` (1-8 people to invite, each an E.164 `phone` or `email` plus optional `name`; one is enough), optional `organizer` (on-behalf mode: the person the meeting is for when it is not you), optional `title`, `durationMinutes` (default 30), `preferredDate`/`preferredTime` + `timezone` (always send `timezone` with a time), `earliestDate`/`latestDate`, `openAsk`, `location`, `organizerAttending`. Returns `meetingId`, `negotiationId`, `status`, `proposedSlots`. |
 | `get_meeting_status` | `GET /v1/meetings/:id` | Status of one meeting incl. each person's accept/decline state, their `role` (`organizer` or `participant`) and the confirmed slot. |
 | `list_meetings` | `GET /v1/meetings` | Meetings you created with this key, newest first. Optional `status` filter (`negotiating`, `confirmed`, `cancelled`, ...) and `limit` (max 50). |
-| `cancel_meeting` | `POST /v1/meetings/:id/cancel` | Cancel a meeting you created. Zoplio tells the invitees (and the on-behalf organizer, if any). |
+| `cancel_meeting` | `POST /v1/meetings/:id/cancel` | Cancel a meeting you created. Zoplio tells the invitees. |
 | `reschedule_meeting` | `POST /v1/meetings/:id/reschedule` | Propose a new exact `preferredDate` + `preferredTime` (+ `timezone`) to all participants. An identical repeat (same meeting, date, time and timezone) is replayed instead of opening another negotiation round; a different time is a new round, and exhausting the round limit cancels the meeting. |
 
 Scheduling mode is picked by the date fields: exact (`preferredDate` + `preferredTime` + `timezone`, a yes/no for one slot), day (`preferredDate` only, the organizer's free slots that day), range (`earliestDate` + `latestDate`, free working-day slots across the window) or open ask (`openAsk: true` plus the window, Zoplio asks each participant what suits them). With no date fields at all Zoplio proposes one slot per working day over the next seven days at the start of the organizer's working hours (09:00 by default), shown to each invitee in their own timezone, so a 09:00 Prague slot reads as 03:00 in New York. Prefer `earliestDate`/`latestDate` on working days unless the user asks for weekends. Always send `timezone` with a time: without it the time is read in the organizer's stored timezone, which is your account's zone (UTC for an account Zoplio has only seen by e-mail, such as a dev-provisioned key) or, for an on-behalf `organizer`, the phone's country zone or UTC for an e-mail contact.

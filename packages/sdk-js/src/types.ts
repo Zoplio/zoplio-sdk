@@ -202,7 +202,11 @@ export interface RescheduleMeetingResult {
 }
 
 export interface CreateWebhookParams {
-  /** Public http(s) endpoint. Private/internal hosts are rejected. */
+  /**
+   * Public https endpoint. The host is DNS-resolved and validated at
+   * subscribe time: http URLs, hosts that do not resolve, and hosts
+   * resolving to private/internal addresses are rejected.
+   */
   url: string;
   /** Defaults to all five events when omitted. */
   events?: WebhookEvent[];
@@ -242,6 +246,11 @@ export interface WebhookDeliveryBody {
   payload: {
     meetingId?: string;
     organizerUserId?: string;
+    /**
+     * The account that owns the API key; equals organizerUserId unless the
+     * meeting was arranged on behalf of someone else.
+     */
+    billingAccountId?: string;
     title?: string;
     /** Present on confirmed/cancelled/failed events. */
     negotiationId?: string;

@@ -199,9 +199,10 @@ export class ZoplioClient {
   // ── Webhooks ───────────────────────────────────────────────────────
 
   /**
-   * Subscribe a URL to meeting lifecycle events (all five when `events` is
-   * omitted). The returned `secret` (whsec_...) is shown exactly once: store
-   * it to verify deliveries.
+   * Subscribe a public https URL to meeting lifecycle events (all five when
+   * `events` is omitted). The host is DNS-resolved and validated at
+   * subscribe time. The returned `secret` (whsec_...) is shown exactly once:
+   * store it to verify deliveries.
    * `POST /v1/webhooks`
    */
   async createWebhook(params: CreateWebhookParams): Promise<WebhookCreated> {

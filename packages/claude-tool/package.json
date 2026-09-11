@@ -7,7 +7,8 @@
   "type": "commonjs",
   "files": [
     "index.js",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

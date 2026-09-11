@@ -253,12 +253,15 @@ class ZoplioClient:
     # ── Webhooks ────────────────────────────────────────
 
     def create_webhook(self, url: str, events: Optional[list[str]] = None) -> dict:
-        """Subscribe a URL to meeting lifecycle events.
+        """Subscribe a public https URL to meeting lifecycle events.
 
         ``POST /v1/webhooks`` → ``{"id", "url", "events", "secret"}``
 
-        The ``whsec_`` secret is returned exactly once; store it to verify
-        deliveries. ``events`` defaults to all five: ``meeting.created``,
+        The host is DNS-resolved and validated at subscribe time: http URLs,
+        hosts that do not resolve, and hosts resolving to private/internal
+        addresses are rejected (``validation_failed``). The ``whsec_`` secret
+        is returned exactly once; store it to verify deliveries. ``events``
+        defaults to all five: ``meeting.created``,
         ``meeting.confirmed``, ``meeting.cancelled``, ``meeting.rescheduled``,
         ``negotiation.failed``.
         """
