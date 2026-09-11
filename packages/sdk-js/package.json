@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npx --yes tsx@4.19.2 --test \"src/**/__tests__/*.test.ts\"",
+    "test": "npx --yes tsx@4.19.2 --test src/__tests__/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "license": "MIT",
