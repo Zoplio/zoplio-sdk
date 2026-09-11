@@ -29,7 +29,7 @@ Create a meeting. You are the organizer; Zoplio takes it from there:
 ```ts
 import { ZoplioClient } from '@zoplio/sdk-js';
 
-const zoplio = new ZoplioClient({ apiKey: process.env.ZOPLIO_API_KEY });
+const zoplio = new ZoplioClient({ apiKey: process.env.ZOPLIO_API_KEY! });
 
 const meeting = await zoplio.scheduleMeeting({
   title: 'Intro call',

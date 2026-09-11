@@ -44,6 +44,10 @@ app.post('/zoplio-webhook', express.raw({ type: 'application/json' }), (req, res
     case 'meeting.confirmed':
       // payload: { meetingId, organizerUserId, negotiationId, participantEmails, confirmedSlot, title }
       break;
+    case 'meeting.rescheduled':
+      // payload: { meetingId, organizerUserId, title, previousSlot }; a fresh
+      // meeting.confirmed (or a cancellation) follows when the move resolves
+      break;
     case 'meeting.cancelled':
     case 'negotiation.failed':
     case 'meeting.created':

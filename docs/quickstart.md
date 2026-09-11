@@ -133,7 +133,7 @@ The response contains the signing `secret` (`whsec_...`), **shown once**. Delive
 ```ts
 import { ZoplioClient } from '@zoplio/sdk-js';
 
-const zoplio = new ZoplioClient({ apiKey: process.env.ZOPLIO_API_KEY });
+const zoplio = new ZoplioClient({ apiKey: process.env.ZOPLIO_API_KEY! });
 const created = await zoplio.scheduleMeeting({
   title: 'Intro call',
   participants: [{ phone: '+420777123456', name: 'Jana' }],
@@ -147,6 +147,8 @@ const meeting = await zoplio.getMeeting(created.meetingId);
 **Python** ([packages/sdk-python](../packages/sdk-python), `pip install zoplio`):
 
 ```python
+import os
+
 from zoplio import ZoplioClient
 
 zoplio = ZoplioClient(api_key=os.environ["ZOPLIO_API_KEY"])
