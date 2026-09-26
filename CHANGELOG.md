@@ -2,7 +2,7 @@
 
 All three packages ship from this repo. Versions follow [semver](https://semver.org/); while the major version is 0, a minor bump may change behaviour and a patch bump does not.
 
-## 0.3.1 (sdk-js, Python) / 0.1.2 (claude-tool), unreleased
+## 0.3.1 (sdk-js, Python) / 0.1.2 (claude-tool), 2026-09-26
 
 ### @zoplio/sdk-js 0.3.1 and zoplio (Python) 0.3.1
 
