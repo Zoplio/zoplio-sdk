@@ -12,6 +12,10 @@ Requires Python >= 3.10. Depends on `httpx`.
 pip install zoplio
 ```
 
+## Get an API key
+
+Sign in at [zoplio.com/dashboard/api](https://zoplio.com/dashboard/api) with Google, go to **API keys** and click **Create key**. Keys start with `zpl_`; copy yours right away, it is shown once. The free plan covers 3 confirmed meetings and 15 meeting requests per calendar month (UTC).
+
 ## Roles
 
 The account that owns the API key is the organizer. `participants` are the people Zoplio invites. To arrange a meeting for someone else, set `organizer`.
@@ -23,21 +27,36 @@ The account that owns the API key is the organizer. `participants` are the peopl
 ## Usage
 
 ```python
+import os
+from datetime import date, timedelta
+
 from zoplio import ZoplioClient, ZoplioError
 
-zoplio = ZoplioClient(api_key="zpl_...")  # base_url defaults to https://api.zoplio.com
+zoplio = ZoplioClient(api_key=os.environ["ZOPLIO_API_KEY"])  # base_url defaults to https://api.zoplio.com
 
-# Create a meeting. You are the organizer; Zoplio invites Jana.
+
+def next_weekday(weekday: int) -> str:
+    """The next given weekday (0 = Monday ... 6 = Sunday) after today, as YYYY-MM-DD."""
+    today = date.today()
+    return (today + timedelta(days=(weekday - today.weekday()) % 7 or 7)).isoformat()
+
+
+# Create a meeting. You are the organizer; Zoplio invites Jana. With no date
+# fields Zoplio proposes free working-day slots over the next week.
 created = zoplio.schedule_meeting(
-    participants=[{"phone": "+420777123456", "name": "Jana"}],
+    participants=[{"phone": "+15555550100", "name": "Jana"}],  # fictional number: use a real one
     title="Intro call",
     duration_minutes=30,
-    preferred_date="2026-09-16",
-    preferred_time="14:00",
-    timezone="Europe/Prague",  # always send it with preferred_time
     idempotency_key="order-42-intro-call",  # optional, safe retries
 )
 print(created["meetingId"], created["status"], created["proposedSlots"])
+
+# Somebody who told Zoplio to stop contacting them is never invited. The
+# meeting is still created with the rest of the list, so check this before
+# you report who it is with; both keys are absent when everybody went in.
+if created.get("skippedParticipants"):
+    print(created["skippedMessage"], created["skippedParticipants"])
+    # -> [{"name": "Jana", "reason": "opted_out"}]
 
 # Poll status (or use webhooks instead). Each entry of meeting["participants"]
 # carries status, attending and role ("organizer" | "participant").
@@ -47,12 +66,27 @@ meeting = zoplio.get_meeting(created["meetingId"])
 zoplio.list_meetings(status="confirmed", limit=10)
 zoplio.reschedule_meeting(
     created["meetingId"],
-    preferred_date="2026-09-17",
+    preferred_date=next_weekday(3),  # next Thursday
     preferred_time="10:00",
     timezone="Europe/Prague",
     idempotency_key="order-42-intro-call-move-1",  # a retry replays instead of opening another round
 )
-zoplio.cancel_meeting(created["meetingId"])
+zoplio.cancel_meeting(created["meetingId"])  # frees the slot on the free plan
+
+# Plan and this month's usage: {"plan", "month", "confirmed", "creates", "limits": {"confirmed", "creates"}}
+usage = zoplio.get_usage()
+```
+
+An exact time: send `preferred_date` + `preferred_time` + `timezone`, and Jana gets a yes/no for that one slot:
+
+```python
+zoplio.schedule_meeting(
+    participants=[{"phone": "+15555550100", "name": "Jana"}],
+    title="Intro call",
+    preferred_date=next_weekday(2),  # next Wednesday
+    preferred_time="14:00",
+    timezone="Europe/Prague",  # always send it with preferred_time
+)
 ```
 
 On behalf of someone else: set `organizer`. Petr is then the organizer (his calendar and timezone; Zoplio tells him the meeting is being arranged and again once it confirms) and Jana is invited:
@@ -60,11 +94,8 @@ On behalf of someone else: set `organizer`. Petr is then the organizer (his cale
 ```python
 zoplio.schedule_meeting(
     organizer={"email": "petr@example.com", "name": "Petr"},
-    participants=[{"phone": "+420777123456", "name": "Jana"}],
+    participants=[{"phone": "+15555550100", "name": "Jana"}],
     title="Intro call",
-    preferred_date="2026-09-16",
-    preferred_time="14:00",
-    timezone="Europe/Prague",
 )
 ```
 
@@ -84,7 +115,9 @@ except ZoplioError as err:
     err.details      # [{"field", "message"}] on validation_failed
 ```
 
-`quota_exceeded` (HTTP 402) means your account's free-plan limit was reached this calendar month, the same limits as for any Zoplio user: 3 confirmed meetings and 15 meeting requests per calendar month (UTC). Meetings still being arranged count against the 3 until they confirm or fall through; `str(err)` says which limit it was.
+`quota_exceeded` (HTTP 402) means your account's free-plan limit was reached this calendar month, the same limits as for any Zoplio user: 3 confirmed meetings and 15 meeting requests per calendar month (UTC). Meetings still being arranged count against the 3 until they confirm or fall through; `str(err)` says which limit it was. `zoplio.get_usage()` shows where you stand, and cancelling a meeting that is still being arranged frees its slot.
+
+`rate_limited` (HTTP 429) means more than 60 requests/min for this key. The response carries a `Retry-After` header (seconds); wait that long before retrying, since throttled requests still count toward the window.
 
 ## Webhooks
 
@@ -104,7 +137,7 @@ zoplio.delete_webhook(hook["id"])
 
 `meeting.rescheduled` fires the moment a confirmed meeting re-opens to move; its payload carries `previousSlot`, and a fresh `meeting.confirmed` (or a cancellation) follows when the renegotiation resolves.
 
-Verify deliveries with the static helper. Pass the RAW request body:
+Verify deliveries with the static helper over the RAW request body, then dedupe: delivery is at-least-once and a retry carries the same `X-Zoplio-Delivery-Id` (also the body's `id`).
 
 ```python
 # e.g. Flask
@@ -117,7 +150,9 @@ def zoplio_hook():
     )
     if not ok:
         return "", 401
-    delivery = request.get_json()  # {"event", "payload", "timestamp"}
+    delivery = request.get_json()  # {"id", "event", "payload", "timestamp"}
+    if already_handled(delivery.get("id")):  # a retry of an event you processed
+        return "", 200
     return "", 200
 ```
 

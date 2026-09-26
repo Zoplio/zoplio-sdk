@@ -28,7 +28,7 @@ const TOOLS = [
  * Build the `.mcp.json` / `mcpServers` entry for the Zoplio hosted MCP server.
  *
  * @param {string} apiKey - Zoplio API key (zpl_...).
- * @param {string} [url] - Override the MCP endpoint (e.g. a dev gateway).
+ * @param {string} [url] - Override the MCP endpoint (for example an evaluation gateway you were given).
  * @returns {{ type: 'http', url: string, headers: { Authorization: string } }}
  */
 function mcpServerConfig(apiKey, url = DEFAULT_MCP_URL) {

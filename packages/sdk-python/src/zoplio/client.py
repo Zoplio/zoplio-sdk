@@ -7,6 +7,8 @@ from urllib.parse import quote
 
 import httpx
 
+from ._version import __version__
+
 
 class ZoplioError(Exception):
     """Error raised for every non-2xx API response.
@@ -45,12 +47,10 @@ class ZoplioClient:
         from zoplio import ZoplioClient
 
         zoplio = ZoplioClient(api_key="zpl_...")
+        # No date fields: Zoplio proposes free working-day slots over the next week.
         created = zoplio.schedule_meeting(
-            participants=[{"phone": "+420777123456", "name": "Jana"}],
+            participants=[{"phone": "+15555550100", "name": "Jana"}],
             title="Intro call",
-            preferred_date="2026-09-16",
-            preferred_time="14:00",
-            timezone="Europe/Prague",
         )
         print(created["meetingId"], created["status"])
     """
@@ -63,6 +63,7 @@ class ZoplioClient:
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "User-Agent": f"zoplio-python/{__version__}",
             },
             timeout=30.0,
         )
@@ -144,7 +145,17 @@ class ZoplioClient:
             the phone's country zone, or UTC for an e-mail contact).
         :param idempotency_key: sent as ``X-Idempotency-Key``; replaying the
             same key returns the originally created meeting.
-        :returns: ``{"meetingId", "negotiationId", "status", "proposedSlots"}``
+        :returns: ``{"meetingId", "negotiationId", "status", "proposedSlots"}``,
+            plus ``skippedParticipants`` and ``skippedMessage`` when somebody
+            on the list was NOT invited. A participant who has told Zoplio to
+            stop contacting them is dropped before anything is sent; the
+            meeting is still created with the rest, so read those two keys
+            before reporting who the meeting is with. They are absent when
+            everybody was invited. Each entry is ``{"name", "reason"}``:
+            Zoplio's name for the person (``email`` / ``phone`` appear only
+            when Zoplio knows the contact is exactly the one you sent) and
+            ``reason`` an open string (``"opted_out"`` today). If EVERY participant had opted out there is nobody to
+            invite and this raises :class:`ZoplioError` ``validation_failed``.
         """
         body: dict[str, Any] = {"participants": participants}
         if organizer is not None:
@@ -249,6 +260,18 @@ class ZoplioClient:
             json=body,
             headers=headers,
         )
+
+    # ── Usage ───────────────────────────────────────────
+
+    def get_usage(self) -> dict:
+        """Your plan and this UTC month's usage against its limits.
+
+        ``GET /v1/usage`` → ``{"plan", "month", "confirmed", "creates",
+        "limits": {"confirmed", "creates"}}`` (a ``None`` limit is uncapped).
+        Cancelling a meeting that is still being arranged frees its slot on
+        the free plan.
+        """
+        return self._request("GET", "/v1/usage")
 
     # ── Webhooks ────────────────────────────────────────
 

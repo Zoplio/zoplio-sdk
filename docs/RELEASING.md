@@ -4,17 +4,18 @@ Three packages ship from this repo:
 
 | Package | Registry | Manifest | Current version |
 |---------|----------|----------|-----------------|
-| `@zoplio/sdk-js` | npm | `packages/sdk-js/package.json` | 0.3.0 |
-| `@zoplio/claude-tool` | npm | `packages/claude-tool/package.json` | 0.1.1 |
-| `zoplio` | PyPI | `packages/sdk-python/pyproject.toml` | 0.3.0 |
+| `@zoplio/sdk-js` | npm | `packages/sdk-js/package.json` (+ `src/version.ts`) | 0.3.1 |
+| `@zoplio/claude-tool` | npm | `packages/claude-tool/package.json` | 0.1.2 |
+| `zoplio` | PyPI | `packages/sdk-python/pyproject.toml` (+ `src/zoplio/_version.py`) | 0.3.1 |
 
-The manifests, READMEs and `LICENSE` copies are owned by this repo; the SDK sources and `docs/openapi.yaml` arrive from Zoplio's internal tree through a sync that never overwrites them. Bump versions here.
+The manifests, package READMEs, `CHANGELOG.md` and `LICENSE` copies are owned by this repo; the SDK sources, `docs/openapi.yaml`, `docs/quickstart.md` and `scripts/check-sdk-example-dates.mjs` arrive from Zoplio's internal tree through a sync that never overwrites the manifests or READMEs. Bump the manifest versions here. The version constants the SDKs send in `User-Agent` (`packages/sdk-js/src/version.ts`, `packages/sdk-python/src/zoplio/_version.py`) arrive with the sources; a unit test in each package fails when the constant and the manifest disagree.
 
 ## Before publishing
 
 1. `main` is green in CI and the working tree is clean (`git status`).
-2. The version in each manifest you are about to publish is higher than what the registry has (`npm view @zoplio/sdk-js version`, `npm view @zoplio/claude-tool version`, `pip index versions zoplio`).
-3. You are logged in: `npm whoami` shows an account with publish rights on the `@zoplio` scope, and a PyPI API token is available to `twine` (for example in `~/.pypirc` or `TWINE_USERNAME=__token__` plus `TWINE_PASSWORD`).
+2. `CHANGELOG.md` has a section for the version, with the release date filled in.
+3. The version in each manifest you are about to publish is higher than what the registry has (`npm view @zoplio/sdk-js version`, `npm view @zoplio/claude-tool version`, `pip index versions zoplio`).
+4. You are logged in: `npm whoami` shows an account with publish rights on the `@zoplio` scope, and a PyPI API token is available to `twine` (for example in `~/.pypirc` or `TWINE_USERNAME=__token__` plus `TWINE_PASSWORD`).
 
 ## @zoplio/sdk-js
 
@@ -55,6 +56,6 @@ The wheel and sdist must both contain `LICENSE` (`unzip -l dist/zoplio-*.whl | g
 
 ## Afterwards
 
-- Tag the commit you published from, one tag per package: `sdk-js-v0.3.0`, `claude-tool-v0.1.1`, `sdk-python-v0.3.0`.
+- Tag the commit you published from, one tag per package: `sdk-js-v0.3.1`, `claude-tool-v0.1.2`, `sdk-python-v0.3.1`.
 - Check the rendered pages: [npmjs.com/package/@zoplio/sdk-js](https://www.npmjs.com/package/@zoplio/sdk-js), [npmjs.com/package/@zoplio/claude-tool](https://www.npmjs.com/package/@zoplio/claude-tool), [pypi.org/project/zoplio](https://pypi.org/project/zoplio/). Package READMEs link with absolute URLs so they render the same on every registry.
 - Install each published artifact into a clean environment once and run the quickstart snippet against it.

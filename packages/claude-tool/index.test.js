@@ -13,7 +13,7 @@ describe('mcpServerConfig', () => {
     });
   });
 
-  it('accepts a URL override (dev gateway)', () => {
+  it('accepts a URL override (another gateway)', () => {
     const cfg = mcpServerConfig('zpl_abc123', 'http://localhost:3022/mcp');
     assert.equal(cfg.url, 'http://localhost:3022/mcp');
   });

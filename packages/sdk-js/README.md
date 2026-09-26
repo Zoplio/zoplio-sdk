@@ -12,6 +12,10 @@ Requires Node.js >= 18 (uses the global `fetch`).
 npm i @zoplio/sdk-js
 ```
 
+## Get an API key
+
+Sign in at [zoplio.com/dashboard/api](https://zoplio.com/dashboard/api) with Google, go to **API keys** and click **Create key**. Keys start with `zpl_`; copy yours right away, it is shown once. The free plan covers 3 confirmed meetings and 15 meeting requests per calendar month (UTC).
+
 ## Roles
 
 The account that owns the API key is the organizer. `participants` are the people Zoplio invites. To arrange a meeting for someone else, set `organizer`.
@@ -30,19 +34,25 @@ const zoplio = new ZoplioClient({
   // baseUrl: 'https://api.zoplio.com'  (default)
 });
 
-// Create a meeting. You are the organizer; Zoplio invites Jana.
+// Create a meeting. You are the organizer; Zoplio invites Jana. With no date
+// fields Zoplio proposes free working-day slots over the next week.
 const created = await zoplio.scheduleMeeting(
   {
     title: 'Intro call',
     durationMinutes: 30,
-    participants: [{ phone: '+420777123456', name: 'Jana' }],
-    preferredDate: '2026-09-16',
-    preferredTime: '14:00',
-    timezone: 'Europe/Prague', // always send it with preferredTime
+    participants: [{ phone: '+15555550100', name: 'Jana' }], // fictional number: use a real one
   },
   { idempotencyKey: 'order-42-intro-call' }, // optional, safe retries
 );
 console.log(created.meetingId, created.status, created.proposedSlots);
+
+// Somebody who told Zoplio to stop contacting them is never invited. The
+// meeting is still created with the rest of the list, so check this before
+// you report who it is with; both fields are absent when everybody went in.
+if (created.skippedParticipants?.length) {
+  console.log(created.skippedMessage, created.skippedParticipants);
+  // -> [{ name: 'Jana', reason: 'opted_out' }]
+}
 
 // Poll status (or use webhooks instead). Each entry of meeting.participants
 // carries status, attending and role ('organizer' | 'participant').
@@ -52,10 +62,33 @@ const meeting = await zoplio.getMeeting(created.meetingId);
 await zoplio.listMeetings({ status: 'confirmed', limit: 10 });
 await zoplio.rescheduleMeeting(
   created.meetingId,
-  { preferredDate: '2026-09-17', preferredTime: '10:00', timezone: 'Europe/Prague' },
+  { preferredDate: nextWeekday(4), preferredTime: '10:00', timezone: 'Europe/Prague' }, // next Thursday
   { idempotencyKey: 'order-42-intro-call-move-1' }, // a retry replays instead of opening another round
 );
-await zoplio.cancelMeeting(created.meetingId);
+await zoplio.cancelMeeting(created.meetingId); // frees the slot on the free plan
+
+// Plan and this month's usage: { plan, month, confirmed, creates, limits: { confirmed, creates } }
+const usage = await zoplio.getUsage();
+
+/** The next given weekday (0 = Sunday ... 6 = Saturday) after today, as YYYY-MM-DD. */
+function nextWeekday(weekday: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + (((weekday - d.getDay() + 7) % 7) || 7));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+```
+
+An exact time: send `preferredDate` + `preferredTime` + `timezone`, and Jana gets a yes/no for that one slot:
+
+```ts
+await zoplio.scheduleMeeting({
+  title: 'Intro call',
+  participants: [{ phone: '+15555550100', name: 'Jana' }],
+  preferredDate: nextWeekday(3), // next Wednesday
+  preferredTime: '14:00',
+  timezone: 'Europe/Prague', // always send it with preferredTime
+});
 ```
 
 On behalf of someone else: set `organizer`. Petr is then the organizer (his calendar and timezone; Zoplio tells him the meeting is being arranged and again once it confirms) and Jana is invited:
@@ -64,10 +97,7 @@ On behalf of someone else: set `organizer`. Petr is then the organizer (his cale
 await zoplio.scheduleMeeting({
   title: 'Intro call',
   organizer: { email: 'petr@example.com', name: 'Petr' },
-  participants: [{ phone: '+420777123456', name: 'Jana' }],
-  preferredDate: '2026-09-16',
-  preferredTime: '14:00',
-  timezone: 'Europe/Prague',
+  participants: [{ phone: '+15555550100', name: 'Jana' }],
 });
 ```
 
@@ -90,7 +120,9 @@ try {
 }
 ```
 
-`quota_exceeded` (HTTP 402) means your account's free-plan limit was reached this calendar month, the same limits as for any Zoplio user: 3 confirmed meetings and 15 meeting requests per calendar month (UTC). Meetings still being arranged count against the 3 until they confirm or fall through; `err.message` says which limit it was.
+`quota_exceeded` (HTTP 402) means your account's free-plan limit was reached this calendar month, the same limits as for any Zoplio user: 3 confirmed meetings and 15 meeting requests per calendar month (UTC). Meetings still being arranged count against the 3 until they confirm or fall through; `err.message` says which limit it was. `zoplio.getUsage()` shows where you stand, and cancelling a meeting that is still being arranged frees its slot.
+
+`rate_limited` (HTTP 429) means more than 60 requests/min for this key. The response carries a `Retry-After` header (seconds); wait that long before retrying, since throttled requests still count toward the window.
 
 ## Webhooks
 
@@ -110,20 +142,28 @@ await zoplio.deleteWebhook(hook.id);
 
 `meeting.rescheduled` fires the moment a confirmed meeting re-opens to move; its payload carries `previousSlot`, and a fresh `meeting.confirmed` (or a cancellation) follows when the renegotiation resolves.
 
-Verify deliveries with the static helper. Pass the RAW request body:
+Verify deliveries with the static helper over the RAW request body, then dedupe: delivery is at-least-once and a retry carries the same `X-Zoplio-Delivery-Id` (also the body's `id`).
 
 ```ts
 import express from 'express';
+import { ZoplioClient, type WebhookDeliveryBody } from '@zoplio/sdk-js';
+
+const app = express();
+const seen = new Set<string>(); // use your database in production
 
 app.post('/zoplio-hook', express.raw({ type: 'application/json' }), (req, res) => {
+  const signature = req.headers['x-zoplio-signature']; // string | string[] | undefined
   const ok = ZoplioClient.verifyWebhookSignature(
-    req.body,                                  // raw Buffer
-    req.header('X-Zoplio-Signature') ?? '',
+    req.body as Buffer,                        // raw bytes
+    typeof signature === 'string' ? signature : '',
     process.env.ZOPLIO_WEBHOOK_SECRET!,        // whsec_...
   );
   if (!ok) return res.status(401).end();
-  const { event, payload, timestamp } = JSON.parse(req.body.toString('utf8'));
-  // event also arrives in the X-Zoplio-Event header
+
+  const delivery = JSON.parse((req.body as Buffer).toString('utf8')) as WebhookDeliveryBody;
+  if (delivery.id && seen.has(delivery.id)) return res.status(200).end(); // a retry: already handled
+  if (delivery.id) seen.add(delivery.id);
+  // delivery.event also arrives in the X-Zoplio-Event header
   res.status(200).end();
 });
 ```

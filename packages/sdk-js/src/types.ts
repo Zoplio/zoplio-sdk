@@ -50,7 +50,7 @@ export interface Slot {
 
 /** A person (organizer or participant): needs `phone` (E.164) or `email`. */
 export interface ParticipantInput {
-  /** E.164 phone number, e.g. `+420777123456`. */
+  /** E.164 phone number, e.g. `+15555550100`. */
   phone?: string;
   email?: string;
   /** Display name, max 200 chars. */
@@ -121,12 +121,52 @@ export interface ScheduleMeetingOptions {
   idempotencyKey?: string;
 }
 
+/**
+ * Why somebody on your `participants` list was not invited. An open string
+ * union: switch on the values you know and treat any other value as "not
+ * invited, reason unrecognised", never as an error.
+ *
+ * `opted_out` - this person told Zoplio to stop contacting them. That decision
+ * is theirs, holds for their whole account and outlives any one meeting, so no
+ * invitation is sent however the meeting is booked.
+ */
+export type SkippedReason = 'opted_out' | (string & {});
+
+/**
+ * Somebody listed in `participants` who was NOT invited. Zoplio identifies the
+ * person by the name it holds for them: the address they were dropped under is
+ * Zoplio's own, not necessarily the contact you sent, so `email` / `phone`
+ * appear only when Zoplio knows the contact is exactly the one from your
+ * request. Today entries carry `name` and `reason`.
+ */
+export interface SkippedParticipant {
+  /** Zoplio's name for the person who was not invited. */
+  name?: string;
+  /** Present only when this is the exact e-mail your request sent. */
+  email?: string;
+  /** Present (E.164) only when this is the exact number your request sent. */
+  phone?: string;
+  reason: SkippedReason;
+}
+
 export interface ScheduleMeetingResult {
   meetingId: string;
   negotiationId: string;
   /** `negotiating` on fresh creates; an idempotent replay returns the real status. */
   status: MeetingStatus;
   proposedSlots: Slot[];
+  /**
+   * The people from `participants` who were NOT invited. Present, and
+   * non-empty, only when the roster shrank; absent means everybody was
+   * invited. This is a normal part of a successful create, never an error, so
+   * check it before reporting who the meeting is with. If EVERY participant
+   * had opted out there is nobody to invite and the call fails with
+   * `validation_failed` instead.
+   */
+  skippedParticipants?: SkippedParticipant[];
+  /** The sentence to show the organizer, in their language, naming who was
+   *  left out and why. Present whenever `skippedParticipants` is. */
+  skippedMessage?: string;
 }
 
 export interface MeetingParticipant {
@@ -201,6 +241,36 @@ export interface RescheduleMeetingResult {
   proposedSlots: Slot[];
 }
 
+/**
+ * Body of `GET /v1/usage`: your plan and what this UTC calendar month has used.
+ * A limit of `null` means uncapped (any plan other than `free`).
+ */
+export interface UsageResult {
+  /** `free`, `paid`, `pro`, `vip` or `enterprise`. Only `free` is capped. */
+  plan: string;
+  /** The UTC month the counts are for, `YYYY-MM`. */
+  month: string;
+  /** Meetings confirmed this month. */
+  confirmed: number;
+  /** Meetings created (requested) this month. */
+  creates: number;
+  /**
+   * This month's caps. `confirmed` already includes referral and purchased
+   * credits. On the free plan a new meeting is refused (402
+   * `quota_exceeded`) once `confirmed` reaches `limits.confirmed`, once
+   * confirmed meetings plus meetings still being arranged fill it, or once
+   * `creates` reaches `limits.creates`.
+   */
+  limits: { confirmed: number | null; creates: number | null };
+  /** The free plan's default caps (3 and 15). */
+  freeConfirmedLimit?: number;
+  freeCreateLimit?: number;
+  /** Unspent referral bonus credits (each lifts `limits.confirmed` by one). */
+  referralCredits?: number;
+  /** Unspent purchased credits (each lifts `limits.confirmed` by one). */
+  purchasedCredits?: number;
+}
+
 export interface CreateWebhookParams {
   /**
    * Public https endpoint. The host is DNS-resolved and validated at
@@ -239,9 +309,16 @@ export interface DeleteWebhookResult {
 /**
  * Body of every webhook delivery POSTed to a subscribed URL. Verify the
  * `X-Zoplio-Signature` header over the RAW request body with
- * `ZoplioClient.verifyWebhookSignature` before trusting it.
+ * `ZoplioClient.verifyWebhookSignature` before trusting it, then dedupe on
+ * `id` (also sent as `X-Zoplio-Delivery-Id`): a retry repeats the event.
  */
 export interface WebhookDeliveryBody {
+  /**
+   * Stable id of the logical event, identical to the `X-Zoplio-Delivery-Id`
+   * header and the same on every retry of that event. Deliveries are
+   * at-least-once: use it as your dedupe key.
+   */
+  id?: string;
   event: WebhookEvent;
   payload: {
     meetingId?: string;

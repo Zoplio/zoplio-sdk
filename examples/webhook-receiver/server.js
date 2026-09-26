@@ -3,11 +3,14 @@
 /**
  * Minimal Zoplio webhook receiver.
  *
- * Zoplio delivers POST {event, payload, timestamp} with headers:
- *   X-Zoplio-Event:     event name (e.g. meeting.confirmed)
- *   X-Zoplio-Signature: lowercase-hex HMAC-SHA256 of the RAW request body,
- *                       keyed with your subscription's whsec_ secret
- *                       (returned once by POST /v1/webhooks).
+ * Zoplio delivers POST {id, event, payload, timestamp} with headers:
+ *   X-Zoplio-Event:       event name (e.g. meeting.confirmed)
+ *   X-Zoplio-Signature:   lowercase-hex HMAC-SHA256 of the RAW request body,
+ *                         keyed with your subscription's whsec_ secret
+ *                         (returned once by POST /v1/webhooks).
+ *   X-Zoplio-Delivery-Id: stable event id (= body id), the same on every retry.
+ *
+ * Delivery is at-least-once, so the receiver skips ids it has already seen.
  *
  * Run: ZOPLIO_WEBHOOK_SECRET=whsec_... node server.js
  */
@@ -23,6 +26,10 @@ if (!SECRET) {
 
 const app = express();
 
+// Ids of events already handled. In production keep these in your database
+// (with a TTL of a few days); a retry of the same event reuses the id.
+const seen = new Set();
+
 // IMPORTANT: verify against the RAW body; re-serialized JSON may not match.
 app.post('/zoplio-webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const signature = req.get('x-zoplio-signature') ?? '';
@@ -37,8 +44,13 @@ app.post('/zoplio-webhook', express.raw({ type: 'application/json' }), (req, res
     return res.status(401).end();
   }
 
-  const { event, payload, timestamp } = JSON.parse(req.body.toString('utf8'));
-  console.log(`[${timestamp}] ${event}`, payload);
+  const { id, event, payload, timestamp } = JSON.parse(req.body.toString('utf8'));
+  if (id && seen.has(id)) {
+    // A retry of an event we already processed: acknowledge, do nothing.
+    return res.status(204).end();
+  }
+  if (id) seen.add(id);
+  console.log(`[${timestamp}] ${event} ${id ?? ''}`, payload);
 
   switch (event) {
     case 'meeting.confirmed':

@@ -37,9 +37,9 @@ def test_schedule_meeting_sends_on_behalf_organizer_and_idempotency_key():
     )
     result = client.schedule_meeting(
         organizer={"email": "petr@example.com", "name": "Petr"},
-        participants=[{"phone": "+420777123456", "name": "Jana"}],
+        participants=[{"phone": "+15555550100", "name": "Jana"}],
         title="Intro call",
-        preferred_date="2026-09-16",
+        preferred_date="2027-09-15",
         preferred_time="14:00",
         timezone="Europe/Prague",
         idempotency_key="key-1",
@@ -53,8 +53,8 @@ def test_schedule_meeting_sends_on_behalf_organizer_and_idempotency_key():
     assert req.headers["X-Idempotency-Key"] == "key-1"
     body = json.loads(req.content)
     assert body["organizer"] == {"email": "petr@example.com", "name": "Petr"}
-    assert body["participants"] == [{"phone": "+420777123456", "name": "Jana"}]
-    assert body["preferredDate"] == "2026-09-16"
+    assert body["participants"] == [{"phone": "+15555550100", "name": "Jana"}]
+    assert body["preferredDate"] == "2027-09-15"
     assert body["timezone"] == "Europe/Prague"
 
 
@@ -75,7 +75,7 @@ def test_reschedule_sends_idempotency_key_when_given():
     )
     client.reschedule_meeting(
         "m1",
-        preferred_date="2026-09-17",
+        preferred_date="2027-09-16",
         preferred_time="10:00",
         timezone="Europe/Prague",
         idempotency_key="move-1",
@@ -84,7 +84,7 @@ def test_reschedule_sends_idempotency_key_when_given():
     assert str(req.url) == "https://api.example.com/v1/meetings/m1/reschedule"
     assert req.headers["X-Idempotency-Key"] == "move-1"
     assert json.loads(req.content) == {
-        "preferredDate": "2026-09-17",
+        "preferredDate": "2027-09-16",
         "preferredTime": "10:00",
         "timezone": "Europe/Prague",
     }
@@ -92,7 +92,7 @@ def test_reschedule_sends_idempotency_key_when_given():
 
 def test_reschedule_without_key_sends_no_idempotency_header():
     client, calls = _mock_client(200, {"meetingId": "m1"})
-    client.reschedule_meeting("a/b", preferred_date="2026-09-17", preferred_time="10:00")
+    client.reschedule_meeting("a/b", preferred_date="2027-09-16", preferred_time="10:00")
     req = calls[0]
     assert str(req.url) == "https://api.example.com/v1/meetings/a%2Fb/reschedule"
     assert "X-Idempotency-Key" not in req.headers
@@ -116,3 +116,45 @@ def test_error_envelope_is_raised_as_zoplio_error():
     assert info.value.code == "quota_exceeded"
     assert info.value.status_code == 402
     assert "15 new meeting requests" in str(info.value)
+
+
+def test_user_agent_names_the_sdk_and_its_version():
+    from zoplio import __version__
+
+    client = ZoplioClient(api_key="zpl_abc")
+    assert client._client.headers["User-Agent"] == f"zoplio-python/{__version__}"
+    client.close()
+
+
+def test_version_matches_pyproject():
+    import re
+    from pathlib import Path
+
+    from zoplio import __version__
+
+    pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+    match = re.search(r'^version = "([^"]+)"', pyproject, re.M)
+    assert match and match.group(1) == __version__
+
+
+def test_get_usage_hits_v1_usage():
+    usage = {
+        "plan": "free",
+        "month": "2027-09",
+        "confirmed": 1,
+        "creates": 4,
+        "limits": {"confirmed": 3, "creates": 15},
+    }
+    client, calls = _mock_client(200, usage)
+    assert client.get_usage() == usage
+    assert calls[0].method == "GET"
+    assert str(calls[0].url) == "https://api.example.com/v1/usage"
+
+
+def test_skipped_participant_shape_matches_the_gateway():
+    from zoplio import SkippedParticipant
+
+    # The gateway names dropped people by name; reason is an open string.
+    entry = SkippedParticipant(name="Jana", reason="opted_out")
+    assert entry.email is None and entry.phone is None
+    assert SkippedParticipant(name="Ema", reason="some_future_reason").reason == "some_future_reason"

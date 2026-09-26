@@ -1,6 +1,6 @@
 {
   "name": "@zoplio/sdk-js",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Official Zoplio Node.js/TypeScript SDK for the Zoplio API v1 (MIT)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",

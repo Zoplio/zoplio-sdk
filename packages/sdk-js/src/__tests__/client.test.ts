@@ -7,7 +7,15 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ZoplioApiError, ZoplioClient } from '../client';
-import type { MeetingParticipant, ScheduleMeetingParams, WebhookEvent } from '../types';
+import pkg from '../../package.json';
+import { SDK_VERSION } from '../version';
+import type {
+  MeetingParticipant,
+  ScheduleMeetingParams,
+  ScheduleMeetingResult,
+  UsageResult,
+  WebhookEvent,
+} from '../types';
 
 describe('verifyWebhookSignature: pinned vectors (must match webhooks service)', () => {
   const secret = 'whsec_0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -158,22 +166,22 @@ describe('ZoplioClient request plumbing', () => {
     const params: ScheduleMeetingParams = {
       title: 'Intro call',
       organizer: { email: 'petr@example.com', name: 'Petr' },
-      participants: [{ phone: '+420777123456', name: 'Jana' }],
-      preferredDate: '2026-09-16',
+      participants: [{ phone: '+15555550100', name: 'Jana' }],
+      preferredDate: '2027-09-15',
       preferredTime: '14:00',
       timezone: 'Europe/Prague',
     };
     await client.scheduleMeeting(params);
     const sent = JSON.parse(String(calls[0].init?.body));
     assert.deepEqual(sent.organizer, { email: 'petr@example.com', name: 'Petr' });
-    assert.deepEqual(sent.participants, [{ phone: '+420777123456', name: 'Jana' }]);
+    assert.deepEqual(sent.participants, [{ phone: '+15555550100', name: 'Jana' }]);
     assert.equal(sent.timezone, 'Europe/Prague');
   });
 
   it('sends X-Idempotency-Key on reschedule only when options carry one', async () => {
     const client = new ZoplioClient({ apiKey: 'zpl_abc', baseUrl: 'https://api.example.com' });
     nextResponse = { status: 200, body: { meetingId: 'm1', status: 'negotiating', proposedSlots: [] } };
-    const params = { preferredDate: '2026-09-17', preferredTime: '10:00', timezone: 'Europe/Prague' };
+    const params = { preferredDate: '2027-09-16', preferredTime: '10:00', timezone: 'Europe/Prague' };
 
     await client.rescheduleMeeting('m1', params, { idempotencyKey: 'move-1' });
     assert.equal(calls[0].url, 'https://api.example.com/v1/meetings/m1/reschedule');
@@ -199,7 +207,7 @@ describe('ZoplioClient request plumbing', () => {
     };
     const invitee: MeetingParticipant = {
       name: 'Jana',
-      phone: '+420777123456',
+      phone: '+15555550100',
       status: 'pending',
       attending: true,
       role: 'participant',
@@ -226,5 +234,54 @@ describe('ZoplioClient request plumbing', () => {
     const hook = await client.createWebhook({ url: 'https://example.com/hook', events });
     assert.equal(hook.secret, 'whsec_x');
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)).events, events);
+  });
+
+  it('sends User-Agent zoplio-sdk-js/<version> on every request', async () => {
+    const client = new ZoplioClient({ apiKey: 'zpl_abc', baseUrl: 'https://api.example.com' });
+    nextResponse = { status: 200, body: { webhooks: [] } };
+    await client.listWebhooks();
+    const headers = calls[0].init?.headers as Record<string, string>;
+    assert.equal(headers['User-Agent'], `zoplio-sdk-js/${SDK_VERSION}`);
+  });
+
+  it('reads GET /v1/usage', async () => {
+    const client = new ZoplioClient({ apiKey: 'zpl_abc', baseUrl: 'https://api.example.com' });
+    const usage: UsageResult = {
+      plan: 'free',
+      month: '2027-09',
+      confirmed: 1,
+      creates: 4,
+      limits: { confirmed: 3, creates: 15 },
+    };
+    nextResponse = { status: 200, body: usage };
+    const got = await client.getUsage();
+    assert.equal(calls[0].url, 'https://api.example.com/v1/usage');
+    assert.equal(calls[0].init?.method, 'GET');
+    assert.deepEqual(got.limits, { confirmed: 3, creates: 15 });
+  });
+
+  it('types skippedParticipants the way the gateway sends them (name + open reason)', async () => {
+    const client = new ZoplioClient({ apiKey: 'zpl_abc', baseUrl: 'https://api.example.com' });
+    // Typed literal: a future reason must still type-check (open string union).
+    const body: ScheduleMeetingResult = {
+      meetingId: 'm1',
+      negotiationId: 'n1',
+      status: 'negotiating',
+      proposedSlots: [],
+      skippedParticipants: [
+        { name: 'Jana', reason: 'opted_out' },
+        { name: 'Ema', reason: 'some_future_reason' },
+      ],
+      skippedMessage: 'Jana asked Zoplio not to contact her, so she was not invited.',
+    };
+    nextResponse = { status: 201, body };
+    const created = await client.scheduleMeeting({ participants: [{ email: 'a@b.cz' }] });
+    assert.deepEqual(created.skippedParticipants?.map((p) => p.name), ['Jana', 'Ema']);
+  });
+});
+
+describe('SDK_VERSION', () => {
+  it('matches package.json', () => {
+    assert.equal(SDK_VERSION, pkg.version);
   });
 });

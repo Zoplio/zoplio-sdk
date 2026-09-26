@@ -13,7 +13,8 @@ Great contributions: SDK bug fixes, typed-response improvements, new integration
 - **Wording:** Zoplio is "open SDK" / "developer-first with open client libraries"; the product itself is a hosted API, not open source and not self-hostable. Docs changes should keep that framing accurate.
 - **No secrets or internal endpoints** in code, tests, or docs: examples use `https://api.zoplio.com` and placeholder keys (`zpl_YOUR_KEY`).
 - Keep the JS and Python clients in 1:1 method parity; if you change one, mirror the other (or note the gap in the PR).
-- Tests: `npm test` in `packages/sdk-js` and `packages/claude-tool`; `python -m py_compile` at minimum for `packages/sdk-python`.
+- Tests: `npm test` in `packages/sdk-js` and `packages/claude-tool`; `pytest` and `mypy src` in `packages/sdk-python`.
+- Examples must keep working when copied: no literal dates under 30 days away (make the example date-free or compute the date from today). `node scripts/check-sdk-example-dates.mjs .` checks it, and CI runs it. Use fictional numbers such as `+15555550100` and `example.com` addresses.
 
 ## Workflow
 

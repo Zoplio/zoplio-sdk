@@ -15,9 +15,11 @@ import {
   ScheduleMeetingOptions,
   ScheduleMeetingParams,
   ScheduleMeetingResult,
+  UsageResult,
   WebhookCreated,
   ZoplioConfig,
 } from './types';
+import { SDK_VERSION } from './version';
 
 /**
  * Error thrown for every non-2xx API response. Carries the contract error
@@ -49,12 +51,10 @@ interface ErrorEnvelope {
  *
  * ```ts
  * const zoplio = new ZoplioClient({ apiKey: process.env.ZOPLIO_API_KEY! });
+ * // No date fields: Zoplio proposes free working-day slots over the next week.
  * const { meetingId } = await zoplio.scheduleMeeting({
  *   title: 'Intro call',
- *   participants: [{ phone: '+420777123456', name: 'Jana' }],
- *   preferredDate: '2026-09-16',
- *   preferredTime: '14:00',
- *   timezone: 'Europe/Prague',
+ *   participants: [{ phone: '+15555550100', name: 'Jana' }],
  * });
  * ```
  *
@@ -87,6 +87,7 @@ export class ZoplioClient {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
+        'User-Agent': `zoplio-sdk-js/${SDK_VERSION}`,
         ...extraHeaders,
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -125,6 +126,13 @@ export class ZoplioClient {
    * again once it confirms). A participant equal to your own number or
    * e-mail throws `ZoplioApiError` with code `validation_failed`.
    * Always send `timezone` with `preferredTime`.
+   *
+   * A participant who has told Zoplio to stop contacting them is never
+   * invited. The meeting is still created with the rest, so check
+   * `skippedParticipants` (and `skippedMessage`) on the result before you
+   * report who the meeting is with; both are absent when everybody was
+   * invited. If EVERY participant had opted out the call throws
+   * `validation_failed` instead, since there is no meeting to make.
    */
   async scheduleMeeting(
     params: ScheduleMeetingParams,
@@ -194,6 +202,19 @@ export class ZoplioClient {
       params,
       headers,
     );
+  }
+
+  // ── Usage ──────────────────────────────────────────────────────────
+
+  /**
+   * Your plan and this UTC month's usage against its limits: `plan`,
+   * `month`, `confirmed`, `creates`, `limits: { confirmed, creates }`
+   * (`null` = uncapped). Cancelling a meeting that is still being arranged
+   * frees its slot on the free plan.
+   * `GET /v1/usage`
+   */
+  async getUsage(): Promise<UsageResult> {
+    return this.request('GET', '/v1/usage');
   }
 
   // ── Webhooks ───────────────────────────────────────────────────────

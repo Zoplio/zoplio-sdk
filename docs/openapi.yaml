@@ -32,13 +32,17 @@ info:
     `unauthorized`). If the auth backend is unavailable the API answers `503`
     (`upstream_error`): an outage never reads as "your key is bad".
 
+    API keys are created in the dashboard: sign in at
+    https://zoplio.com/dashboard/api with Google, then API keys > Create key.
+    Keys start with `zpl_` and are shown once.
+
     ## Rate limiting
-    60 requests/min per API key (sliding window). Authenticated responses
-    carry `X-RateLimit-Limit` and `X-RateLimit-Remaining`; exceeding the
-    window returns `429` with code `rate_limited`. Rejected requests still
-    count toward the window. A shared per-IP ceiling of 300 requests/min
-    applies across all keys, and the sign-in and key-provisioning routes
-    allow 15 requests/min per IP.
+    60 requests/min per API key (sliding window), shared by REST and the
+    hosted MCP server. Authenticated responses carry `X-RateLimit-Limit` and
+    `X-RateLimit-Remaining`; exceeding the window returns `429` with code
+    `rate_limited` and a `Retry-After` header (seconds). Rejected requests
+    still count toward the window. A shared per-IP ceiling of 300
+    requests/min applies across all keys.
 
     ## Errors
     Every non-2xx response uses one envelope:
@@ -50,9 +54,10 @@ info:
     ## Plans & quotas
     Free plan: 3 confirmed meetings and 15 meeting requests per calendar
     month (UTC). Meetings still being arranged count against the 3 until they
-    confirm or fall through. `402` with code `quota_exceeded` when a limit is
-    reached; the `message` says which one. `paid` and `vip` plans are
-    uncapped.
+    confirm or fall through; cancelling one frees its slot. `402` with code
+    `quota_exceeded` when a limit is reached; the `message` says which one.
+    `GET /v1/usage` returns the current counts and limits. Plans other than
+    `free` are uncapped.
 
     ## Idempotency
     `POST /v1/meetings` accepts an `X-Idempotency-Key` header (1-128 chars).
@@ -82,8 +87,10 @@ tags:
     description: Create, inspect, reschedule and cancel agent-negotiated meetings
   - name: Webhooks
     description: Subscriptions for meeting lifecycle events
+  - name: Account
+    description: Your plan and usage
   - name: Developer
-    description: Dev-environment provisioning and service health
+    description: Service health
 
 paths:
   /health:
@@ -144,9 +151,18 @@ paths:
         the time in the organizer's stored timezone: your account's zone
         (a WhatsApp account's phone country zone, or the browser zone
         captured at dashboard sign-in; UTC for an account Zoplio has only
-        seen by e-mail, such as a dev-provisioned key), or for an on-behalf
+        seen by e-mail), or for an on-behalf
         `organizer` the phone's country zone for a phone contact and UTC for
         an e-mail contact.
+
+        Somebody who has told Zoplio to stop contacting them is never
+        invited, whoever asks. The meeting is still created with the rest of
+        the list and the `201` names them in `skippedParticipants` with the
+        sentence to relay in `skippedMessage`. Read that field before you
+        report who was invited: the response is a normal success and the
+        only signal that the roster shrank. If everybody on the list has
+        opted out there is nobody to invite and the call fails with `400`
+        (`validation_failed`) instead.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -344,6 +360,31 @@ paths:
         "502":
           $ref: "#/components/responses/UpstreamError"
 
+  /v1/usage:
+    get:
+      tags: [Account]
+      summary: Your plan and this month's usage
+      operationId: getUsage
+      description: |
+        The plan of the account that owns the key and what the current UTC
+        calendar month has used against its limits. On the free plan a new
+        meeting answers `402 quota_exceeded` once `confirmed` reaches
+        `limits.confirmed`, once confirmed meetings plus meetings still
+        being arranged fill it, or once `creates` reaches `limits.creates`.
+      responses:
+        "200":
+          description: Plan, counts and limits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
   /v1/webhooks:
     post:
       tags: [Webhooks]
@@ -468,15 +509,19 @@ webhooks:
       summary: A meeting was created
       description: |
         Sent when a meeting is created (negotiation starting). All deliveries
-        carry `X-Zoplio-Event` (the event name) and `X-Zoplio-Signature`
+        carry `X-Zoplio-Event` (the event name), `X-Zoplio-Signature`
         (HMAC-SHA256 of the raw request body with your subscription's
-        `whsec_` secret, hex-encoded). Verify by recomputing over the RAW
-        bytes before parsing. Respond 2xx within 10 seconds; failures are
-        retried up to 2 more times (3 attempts total) with 1m/5m backoff,
-        and the subscription is disabled after 10 consecutive failures.
+        `whsec_` secret, hex-encoded) and `X-Zoplio-Delivery-Id` (the stable
+        event id, equal to the body's `id`). Verify by recomputing over the
+        RAW bytes before parsing. Delivery is at-least-once: a retried event
+        carries the same `X-Zoplio-Delivery-Id`, so dedupe on it. Respond 2xx
+        within 10 seconds; failures are retried up to 2 more times (3
+        attempts total) with 1m/5m backoff, and the subscription is disabled
+        after 10 consecutive failures.
       parameters:
         - $ref: "#/components/parameters/ZoplioEventHeader"
         - $ref: "#/components/parameters/ZoplioSignatureHeader"
+        - $ref: "#/components/parameters/ZoplioDeliveryIdHeader"
       requestBody:
         content:
           application/json:
@@ -493,6 +538,7 @@ webhooks:
       parameters:
         - $ref: "#/components/parameters/ZoplioEventHeader"
         - $ref: "#/components/parameters/ZoplioSignatureHeader"
+        - $ref: "#/components/parameters/ZoplioDeliveryIdHeader"
       requestBody:
         content:
           application/json:
@@ -509,6 +555,7 @@ webhooks:
       parameters:
         - $ref: "#/components/parameters/ZoplioEventHeader"
         - $ref: "#/components/parameters/ZoplioSignatureHeader"
+        - $ref: "#/components/parameters/ZoplioDeliveryIdHeader"
       requestBody:
         content:
           application/json:
@@ -531,6 +578,7 @@ webhooks:
       parameters:
         - $ref: "#/components/parameters/ZoplioEventHeader"
         - $ref: "#/components/parameters/ZoplioSignatureHeader"
+        - $ref: "#/components/parameters/ZoplioDeliveryIdHeader"
       requestBody:
         content:
           application/json:
@@ -547,6 +595,7 @@ webhooks:
       parameters:
         - $ref: "#/components/parameters/ZoplioEventHeader"
         - $ref: "#/components/parameters/ZoplioSignatureHeader"
+        - $ref: "#/components/parameters/ZoplioDeliveryIdHeader"
       requestBody:
         content:
           application/json:
@@ -590,6 +639,15 @@ components:
       description: The event name, identical to `event` in the body
       schema:
         $ref: "#/components/schemas/WebhookEvent"
+    ZoplioDeliveryIdHeader:
+      name: X-Zoplio-Delivery-Id
+      in: header
+      required: false
+      description: >-
+        Stable id of the logical event, equal to `id` in the body and the same
+        on every retry of that event. Use it as your dedupe key.
+      schema:
+        type: string
     ZoplioSignatureHeader:
       name: X-Zoplio-Signature
       in: header
@@ -600,6 +658,10 @@ components:
         pattern: "^[0-9a-f]{64}$"
 
   headers:
+    Retry-After:
+      description: Seconds to wait before retrying
+      schema:
+        type: integer
     X-RateLimit-Limit:
       description: Requests allowed per minute for this API key
       schema:
@@ -637,6 +699,8 @@ components:
     RateLimited:
       description: Over 60 requests/min for this key, or over the shared per-IP ceiling (code `rate_limited`)
       headers:
+        Retry-After:
+          $ref: "#/components/headers/Retry-After"
         X-RateLimit-Limit:
           $ref: "#/components/headers/X-RateLimit-Limit"
         X-RateLimit-Remaining:
@@ -723,7 +787,8 @@ components:
         phone:
           type: string
           pattern: "^\\+[1-9][0-9]{6,14}$"
-          description: E.164, e.g. +420777123456
+          description: E.164, e.g. +15555550100
+          example: "+15555550100"
         email:
           type: string
           format: email
@@ -769,12 +834,15 @@ components:
           type: string
           format: date
           description: YYYY-MM-DD. Required when preferredTime is set.
+          example: "2027-09-15"
         preferredTime:
           type: string
           pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
           description: HH:MM, 24-hour
+          example: "14:00"
         timezone:
           type: string
+          example: Europe/Prague
           description: >-
             IANA timezone the preferred date/time are expressed in (e.g.
             Europe/Prague). Always send it with preferredTime; without it the
@@ -786,10 +854,12 @@ components:
           type: string
           format: date
           description: YYYY-MM-DD. Start of the window for range and open-ask scheduling.
+          example: "2027-09-13"
         latestDate:
           type: string
           format: date
           description: YYYY-MM-DD. End of the window for range and open-ask scheduling.
+          example: "2027-09-17"
         openAsk:
           type: boolean
           description: Ask participants for their availability instead of proposing slots
@@ -819,6 +889,56 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Slot"
+        skippedParticipants:
+          type: array
+          description: >-
+            People from `participants` who were NOT invited. Present, and
+            non-empty, only when the roster shrank; its absence means
+            everybody on the list was invited. A normal part of a `201`, not
+            an error.
+          items:
+            $ref: "#/components/schemas/SkippedParticipant"
+        skippedMessage:
+          type: string
+          description: >-
+            The sentence to show the organizer, in their language, naming who
+            was left out and why. Present whenever `skippedParticipants` is.
+
+    SkippedParticipant:
+      type: object
+      required: [reason]
+      description: >-
+        Somebody the request listed who was not invited. Identified by the name
+        Zoplio holds for them: the address they were dropped under is Zoplio's
+        internal one, not necessarily the contact the request sent, so matching
+        one to the other would risk naming the wrong person. `email` and `phone`
+        appear only when the contact is known to be the one from the request.
+      properties:
+        name:
+          type: string
+          description: >-
+            Zoplio's name for the person who was not invited. Present on every
+            entry Zoplio can name.
+          example: Jana
+        email:
+          type: string
+          description: >-
+            Present only when this is the exact e-mail the request sent for this
+            person.
+        phone:
+          type: string
+          description: >-
+            Present (E.164) only when this is the exact number the request sent
+            for this person.
+        reason:
+          type: string
+          example: opted_out
+          description: >-
+            An OPEN set, not a closed enum: new reasons may be added, so switch
+            on the values you know and treat an unknown one as "not invited,
+            reason unrecognised" rather than as an error. `opted_out` - this
+            person told Zoplio to stop contacting them, so no invitation was
+            sent - is the only value sent today.
 
     MeetingParticipant:
       type: object
@@ -875,6 +995,50 @@ components:
           type: string
           format: date-time
 
+    Usage:
+      type: object
+      required: [plan, month, confirmed, creates, limits]
+      properties:
+        plan:
+          type: string
+          description: "`free`, `paid`, `pro`, `vip` or `enterprise`. Only `free` is capped."
+          example: free
+        month:
+          type: string
+          description: The UTC calendar month the counts cover, YYYY-MM
+          example: "2027-09"
+        confirmed:
+          type: integer
+          description: Meetings confirmed this month
+          example: 1
+        creates:
+          type: integer
+          description: Meetings created (requested) this month
+          example: 4
+        limits:
+          type: object
+          required: [confirmed, creates]
+          description: This month's caps; `null` means uncapped. `confirmed` already includes referral and purchased credits.
+          properties:
+            confirmed:
+              type: [integer, "null"]
+              example: 3
+            creates:
+              type: [integer, "null"]
+              example: 15
+        freeConfirmedLimit:
+          type: integer
+          description: The free plan's default confirmed-meeting cap
+        freeCreateLimit:
+          type: integer
+          description: The free plan's default meeting-request cap
+        referralCredits:
+          type: integer
+          description: Unspent referral credits (each lifts `limits.confirmed` by one)
+        purchasedCredits:
+          type: integer
+          description: Unspent purchased credits (each lifts `limits.confirmed` by one)
+
     WebhookSummary:
       type: object
       required: [id, url, events, active]
@@ -898,6 +1062,12 @@ components:
       type: object
       required: [event, payload, timestamp]
       properties:
+        id:
+          type: string
+          description: >-
+            Stable id of the logical event, equal to the `X-Zoplio-Delivery-Id`
+            header and the same on every retry. Deliveries are at-least-once:
+            dedupe on it.
         event:
           $ref: "#/components/schemas/WebhookEvent"
         payload:

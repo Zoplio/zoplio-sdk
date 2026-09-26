@@ -1,13 +1,13 @@
 # Webhook receiver example
 
-Receives Zoplio webhook deliveries and verifies the `X-Zoplio-Signature` HMAC against the raw body.
+Receives Zoplio webhook deliveries, verifies the `X-Zoplio-Signature` HMAC against the raw body, and skips retries of events it has already handled (`X-Zoplio-Delivery-Id`, also the body's `id`).
 
 ```bash
 npm install
 ZOPLIO_WEBHOOK_SECRET=whsec_your_secret npm start
 # register it:
 curl -X POST https://api.zoplio.com/v1/webhooks \
-  -H "Authorization: Bearer zpl_YOUR_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZOPLIO_API_KEY" -H "Content-Type: application/json" \
   -d '{"url":"https://your-public-url/zoplio-webhook","events":["meeting.confirmed","meeting.rescheduled","meeting.cancelled"]}'
 ```
 
